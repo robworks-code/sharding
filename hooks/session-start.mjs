@@ -8,11 +8,11 @@ const cwd = event.cwd ?? process.cwd();
 const detected = detectShard(cwd);
 const repoRoot = detected ? detected.repoRoot : cwd;
 const relDir = detected ? `shards/${detected.shard}` : ".";
-const cli = resolve(process.env.CLAUDE_PLUGIN_ROOT ?? ".", "src", "cli.ts");
+const cli = resolve(process.env.CLAUDE_PLUGIN_ROOT ?? ".", "dist", "cli.mjs");
 
 let context;
 try {
-  const out = execFileSync("npx", ["tsx", cli, "orient", "--dir", relDir], { cwd: repoRoot, encoding: "utf8" });
+  const out = execFileSync(process.execPath, [cli, "orient", "--dir", relDir], { cwd: repoRoot, encoding: "utf8" });
   const info = JSON.parse(out);
   context = info.role === "shard"
     ? `You are working in shard "${info.shard}". You may read ONLY this shard's directory and the read-only contract/. You couple to other shards solely through contract/ (consumed slices: ${(info.consumes ?? []).join(", ") || "none"}). Run /shard-check before claiming done.`

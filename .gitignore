@@ -1,5 +1,8 @@
 node_modules/
-dist/
+dist/*
+# The bundled CLI is a shipped plugin artifact - Claude Code copies the plugin
+# to a cache with no node_modules, so the self-contained bundle must be tracked.
+!dist/cli.mjs
 
 # Demo fixtures: per-shard guardrail files are legitimate plugin artifacts.
 # The user's global ignore excludes **/CLAUDE.md; re-include the demo ones.

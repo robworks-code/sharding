@@ -8,10 +8,10 @@ const cwd = event.cwd ?? process.cwd();
 const detected = detectShard(cwd);
 if (!detected) process.exit(0); // only shard sessions are gated on stop
 const { repoRoot, shard } = detected;
-const cli = resolve(process.env.CLAUDE_PLUGIN_ROOT ?? ".", "src", "cli.ts");
+const cli = resolve(process.env.CLAUDE_PLUGIN_ROOT ?? ".", "dist", "cli.mjs");
 
 try {
-  execFileSync("npx", ["tsx", cli, "check", shard], { cwd: repoRoot, encoding: "utf8" });
+  execFileSync(process.execPath, [cli, "check", shard], { cwd: repoRoot, encoding: "utf8" });
   process.exit(0); // clean -> allow stop
 } catch (e) {
   const report = String(e.stdout ?? "");

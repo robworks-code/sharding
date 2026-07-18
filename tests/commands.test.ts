@@ -13,8 +13,8 @@ describe("plugin command surface", () => {
     expect(existsSync(join(root, "skills", "sharding", "SKILL.md"))).toBe(true);
   });
   it("check/status/phase-check commands invoke the matching CLI subcommand", () => {
-    expect(cmd("shard-check")).toMatch(/cli\.ts check/);
-    expect(cmd("shard-status")).toMatch(/cli\.ts status/);
-    expect(cmd("shard-phase-check")).toMatch(/cli\.ts phase-check/);
+    expect(cmd("shard-check")).toMatch(/cli\.mjs check/);
+    expect(cmd("shard-status")).toMatch(/cli\.mjs status/);
+    expect(cmd("shard-phase-check")).toMatch(/cli\.mjs phase-check/);
   });
 });

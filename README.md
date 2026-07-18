@@ -87,9 +87,25 @@ Each command exits non-zero when it finds drift or a failing gate, so it drops s
 npm install
 npm test          # vitest run - full suite
 npm run typecheck # tsc --noEmit
+npm run build     # bundle src/cli.ts -> dist/cli.mjs (self-contained)
 ```
 
 The only runtime dependency is `yaml`; everything else is dev tooling.
+
+### The bundled CLI
+
+The plugin's hooks and commands invoke `node ${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs`, a single self-contained bundle (esbuild, `yaml` inlined). Claude Code installs a plugin by copying it to a cache with no `node_modules`, so the engine must not depend on installed packages at run time - hence the bundle, which is committed. **Re-run `npm run build` after changing anything under `src/`,** or the installed plugin will run stale logic.
+
+## Installing locally
+
+This repo doubles as a single-plugin marketplace (`.claude-plugin/marketplace.json`), so you can install and test it directly:
+
+```
+/plugin marketplace add ~/git/sharding
+/plugin install sharding@sharding-local
+```
+
+Then reload plugins (or restart the session). The eventual home is the robworks marketplace; this local marketplace is for development and testing.
 
 ## Status
 

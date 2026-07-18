@@ -1,0 +1,26 @@
+{
+  "name": "sharding-local",
+  "owner": {
+    "name": "Ryan Robson and Robworks Software LLC",
+    "url": "https://robworks.info"
+  },
+  "metadata": {
+    "description": "Single-plugin marketplace for installing and testing the sharding plugin directly from this repo.",
+    "version": "0.0.1"
+  },
+  "plugins": [
+    {
+      "name": "sharding",
+      "source": "./",
+      "description": "Develop a product as isolated shards coupled only through a frozen, versioned contract, with drift caught mechanically.",
+      "homepage": "https://github.com/ringo380/sharding",
+      "repository": "https://github.com/ringo380/sharding",
+      "license": "MIT",
+      "author": {
+        "name": "Ryan Robson and Robworks Software LLC"
+      },
+      "category": "developer-tools",
+      "keywords": ["sharding", "contract-first", "isolation", "spec-driven", "monorepo"]
+    }
+  ]
+}

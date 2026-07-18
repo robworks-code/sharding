@@ -2,7 +2,11 @@
   "name": "sharding",
   "version": "0.0.1",
   "description": "Develop a product as isolated shards coupled only through a frozen, versioned contract, with drift caught mechanically.",
-  "commands": "./commands",
-  "skills": "./skills",
-  "hooks": "./hooks/hooks.json"
+  "author": {
+    "name": "Ryan Robson and Robworks Software LLC"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/ringo380/sharding",
+  "repository": "https://github.com/ringo380/sharding",
+  "keywords": ["sharding", "contract-first", "isolation", "spec-driven", "monorepo"]
 }
