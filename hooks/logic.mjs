@@ -21,7 +21,9 @@ export function detectShard(cwd) {
 export function decidePreToolUse(ctx) {
   const contractDir = resolve(ctx.repoRoot, "contract");
   if (!ctx.targetPath) return { deny: false };
-  const target = resolve(ctx.targetPath);
+  // Resolve against the session cwd, not the hook subprocess's own cwd, so a
+  // relative tool path is measured from where the shard session actually is.
+  const target = resolve(ctx.cwd ?? ".", ctx.targetPath);
   const isWrite = ["Write", "Edit", "NotebookEdit"].includes(ctx.toolName);
   if (isWrite) {
     if (isInside(contractDir, target)) return { deny: true, reason: "shards may not write the contract; change it from the conductor with /shard-contract" };

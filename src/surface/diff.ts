@@ -41,9 +41,10 @@ function diffShape(expected: ShapeType, actual: ShapeType, slice: string, loc: s
     return diffShape(expected.items, actual.items, slice, `${loc}[]`);
   }
   if (expected.kind === "enum" && actual.kind === "enum") {
-    const e = [...expected.values].sort().join("|");
-    const a = [...actual.values].sort().join("|");
-    return e === a ? [] : [{ slice, kind: "enum-mismatch", location: loc, expected: e, actual: a }];
+    const e = [...expected.values].sort();
+    const a = [...actual.values].sort();
+    const same = e.length === a.length && e.every((v, i) => v === a[i]);
+    return same ? [] : [{ slice, kind: "enum-mismatch", location: loc, expected: e.join("|"), actual: a.join("|") }];
   }
   if (expected.kind === "primitive" && actual.kind === "primitive") {
     return expected.name === actual.name
