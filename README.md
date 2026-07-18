@@ -52,6 +52,7 @@ Three mechanisms enforce the boundaries:
 - `hooks/`, `commands/`, `skills/`, `.claude-plugin/` - the Claude Code plugin surface (SessionStart / PreToolUse / Stop hooks, the `/shard-*` commands, and the sharding skill)
 - `examples/demo/` - a two-shard demo (`orders` provides an Order API; `gateway` consumes it) whose end-to-end test drives the real engine
 - `tests/` - the test suite (44 tests across 16 files)
+- `docs/design.md` - the design spec: premise, scope decisions, and the mechanism in full
 
 ## The plugin commands
 
@@ -96,16 +97,25 @@ The only runtime dependency is `yaml`; everything else is dev tooling.
 
 The plugin's hooks and commands invoke `node ${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs`, a single self-contained bundle (esbuild, `yaml` inlined). Claude Code installs a plugin by copying it to a cache with no `node_modules`, so the engine must not depend on installed packages at run time - hence the bundle, which is committed. **Re-run `npm run build` after changing anything under `src/`,** or the installed plugin will run stale logic.
 
-## Installing locally
+## Installing
 
-This repo doubles as a single-plugin marketplace (`.claude-plugin/marketplace.json`), so you can install and test it directly:
+From the robworks marketplace:
+
+```
+/plugin marketplace add ringo380/robworks-claude-code-plugins
+/plugin install sharding@robworks-claude-code-plugins
+```
+
+Then reload plugins (or restart the session).
+
+### From a local clone
+
+This repo also doubles as a single-plugin marketplace (`.claude-plugin/marketplace.json`), so you can install and test a working copy directly:
 
 ```
 /plugin marketplace add ~/git/sharding
 /plugin install sharding@sharding-local
 ```
-
-Then reload plugins (or restart the session). The eventual home is the robworks marketplace; this local marketplace is for development and testing.
 
 ## Status
 

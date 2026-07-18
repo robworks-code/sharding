@@ -6,7 +6,7 @@
     "name": "Ryan Robson and Robworks Software LLC"
   },
   "license": "MIT",
-  "homepage": "https://github.com/ringo380/sharding",
-  "repository": "https://github.com/ringo380/sharding",
+  "homepage": "https://github.com/Robworks-Code/sharding",
+  "repository": "https://github.com/Robworks-Code/sharding",
   "keywords": ["sharding", "contract-first", "isolation", "spec-driven", "monorepo"]
 }
