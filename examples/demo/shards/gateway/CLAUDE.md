@@ -1,0 +1,1 @@
+This is the `gateway` shard. A session opened here may read only this directory and the read-only `contract/` directory - no sibling shard, no writing the contract. It couples to other shards solely through the frozen contract. See `SHARD.md` for what this shard provides and consumes.

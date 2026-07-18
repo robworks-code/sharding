@@ -1,0 +1,16 @@
+{
+  "slice": "Order",
+  "symbols": {
+    "Order": {
+      "name": "Order",
+      "kind": "type",
+      "shape": {
+        "kind": "object",
+        "fields": {
+          "id": { "type": { "kind": "primitive", "name": "string" }, "required": true },
+          "total": { "type": { "kind": "primitive", "name": "number" }, "required": true }
+        }
+      }
+    }
+  }
+}

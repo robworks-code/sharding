@@ -1,0 +1,4 @@
+phases:
+  - id: phase-1
+    contractVersion: v1
+    shards: [orders, gateway]

@@ -1,0 +1,32 @@
+{
+  "slice": "OrderAPI",
+  "symbols": {
+    "placeOrder": {
+      "name": "placeOrder",
+      "kind": "endpoint",
+      "shape": {
+        "kind": "object",
+        "fields": {
+          "request": {
+            "type": {
+              "kind": "object",
+              "fields": {
+                "order": { "type": { "kind": "ref", "name": "Order" }, "required": true }
+              }
+            },
+            "required": true
+          },
+          "response": {
+            "type": {
+              "kind": "object",
+              "fields": {
+                "id": { "type": { "kind": "primitive", "name": "string" }, "required": true }
+              }
+            },
+            "required": true
+          }
+        }
+      }
+    }
+  }
+}

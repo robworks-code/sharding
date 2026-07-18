@@ -1,0 +1,13 @@
+contractVersion: v1
+currentPhase: phase-1
+shards:
+  orders:
+    dir: shards/orders
+    adapter: identity
+    provides: [OrderAPI, Order]
+    consumes: []
+  gateway:
+    dir: shards/gateway
+    adapter: identity
+    provides: []
+    consumes: [OrderAPI, Order]
