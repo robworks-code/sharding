@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { detectShard } from "./logic.mjs";
 
 const event = JSON.parse(readFileSync(0, "utf8"));
 const cwd = event.cwd ?? process.cwd();
-const m = cwd.match(/^(.*)\/shards\/([^/]+)(?:\/|$)/);
-const repoRoot = m ? m[1] : cwd;
-const relDir = m ? `shards/${m[2]}` : ".";
+const detected = detectShard(cwd);
+const repoRoot = detected ? detected.repoRoot : cwd;
+const relDir = detected ? `shards/${detected.shard}` : ".";
 const cli = resolve(process.env.CLAUDE_PLUGIN_ROOT ?? ".", "src", "cli.ts");
 
 let context;

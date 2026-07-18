@@ -1,13 +1,13 @@
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { detectShard } from "./logic.mjs";
 
 const event = JSON.parse(readFileSync(0, "utf8"));
 const cwd = event.cwd ?? process.cwd();
-const m = cwd.match(/^(.*)\/shards\/([^/]+)(?:\/|$)/);
-if (!m) process.exit(0); // only shard sessions are gated on stop
-const repoRoot = m[1];
-const shard = m[2];
+const detected = detectShard(cwd);
+if (!detected) process.exit(0); // only shard sessions are gated on stop
+const { repoRoot, shard } = detected;
 const cli = resolve(process.env.CLAUDE_PLUGIN_ROOT ?? ".", "src", "cli.ts");
 
 try {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decidePreToolUse } from "../../hooks/logic.mjs";
+import { decidePreToolUse, detectShard } from "../../hooks/logic.mjs";
 
 const shardCwd = "/repo/shards/gateway";
 
@@ -31,5 +31,25 @@ describe("decidePreToolUse", () => {
       toolName: "Bash", targetPath: null,
     });
     expect(d.deny).toBe(false);
+  });
+});
+
+describe("detectShard", () => {
+  it("detects a normal shard cwd", () => {
+    const d = detectShard("/repo/shards/gateway/src");
+    expect(d).toEqual({ repoRoot: "/repo", shard: "gateway", shardDir: "/repo/shards/gateway" });
+  });
+
+  it("returns null for a conductor cwd (no /shards/)", () => {
+    const d = detectShard("/repo");
+    expect(d).toBeNull();
+  });
+
+  it("anchors to the FIRST /shards/ segment, not a nested one", () => {
+    // Regression test: the greedy regex this replaces would anchor to the LAST /shards/
+    // segment, mis-deriving repoRoot/shardDir when a shard's own subtree contains a
+    // directory literally named "shards" (e.g. a shard's build output).
+    const d = detectShard("/repo/shards/gateway/tools/shards/output");
+    expect(d).toEqual({ repoRoot: "/repo", shard: "gateway", shardDir: "/repo/shards/gateway" });
   });
 });

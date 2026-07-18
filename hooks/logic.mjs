@@ -5,6 +5,18 @@ function isInside(dir, target) {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
+// A shard session is one whose cwd is inside shards/<name>. Derive the shard dir + repo root from cwd.
+// Anchored to the FIRST /shards/ segment (non-greedy) so a nested "shards" dir inside a shard's own
+// subtree (e.g. /repo/shards/gateway/tools/shards/output) doesn't get mistaken for the repo boundary.
+export function detectShard(cwd) {
+  const m = cwd.match(/^(.*?)\/shards\/([^/]+)(?:\/|$)/);
+  if (!m) return null;
+  const repoRoot = m[1];
+  const shard = m[2];
+  const shardDir = resolve(repoRoot, "shards", shard);
+  return { repoRoot, shardDir, shard };
+}
+
 // { cwd, repoRoot, shardDir, toolName, targetPath } -> { deny: boolean, reason?: string }
 export function decidePreToolUse(ctx) {
   const contractDir = resolve(ctx.repoRoot, "contract");
