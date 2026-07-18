@@ -1,0 +1,8 @@
+{
+  "name": "sharding",
+  "version": "0.0.1",
+  "description": "Develop a product as isolated shards coupled only through a frozen, versioned contract, with drift caught mechanically.",
+  "commands": "./commands",
+  "skills": "./skills",
+  "hooks": "./hooks/hooks.json"
+}

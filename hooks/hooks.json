@@ -1,0 +1,13 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/session-start.mjs" }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "Read|Write|Edit|NotebookEdit", "hooks": [{ "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/pre-tool-use.mjs" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/stop.mjs" }] }
+    ]
+  }
+}
