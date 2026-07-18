@@ -51,12 +51,12 @@ Three mechanisms enforce the boundaries:
   - `cli.ts` - a pure, testable dispatch over every engine operation
 - `hooks/`, `commands/`, `skills/`, `.claude-plugin/` - the Claude Code plugin surface (SessionStart / PreToolUse / Stop hooks, the `/shard-*` commands, and the sharding skill)
 - `examples/demo/` - a two-shard demo (`orders` provides an Order API; `gateway` consumes it) whose end-to-end test drives the real engine
-- `tests/` - the test suite (44 tests across 16 files)
+- `tests/` - the test suite (49 tests across 16 files)
 - `docs/design.md` - the design spec: premise, scope decisions, and the mechanism in full
 
 ## The plugin commands
 
-Used from inside Claude Code once the plugin is installed:
+Used from inside Claude Code once the plugin is installed. When installed as a plugin, the commands are namespaced under `sharding` - `/sharding:shard-check`, `/sharding:shard-status`, and so on:
 
 | Command | Where | Does |
 | --- | --- | --- |
