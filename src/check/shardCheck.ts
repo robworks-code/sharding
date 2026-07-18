@@ -31,6 +31,10 @@ export function checkShard(root: string, shardName: string): ShardCheckResult {
       findings.push({ slice, kind: "missing-symbol", location: slice });
       continue;
     }
+    if (!adapter.exists(shardDir, slice)) {
+      findings.push({ slice, kind: "missing-symbol", location: `${slice} (no provided surface)` });
+      continue;
+    }
     const extracted = adapter.extract(shardDir, slice);
     findings.push(...diffSurface(expected, extracted));
     findings.push(...lintConventions(extracted, rules));

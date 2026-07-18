@@ -1,7 +1,11 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Field, ShapeType, StructuralSurface } from "../surface/types";
 import type { SurfaceAdapter } from "./index";
+
+function schemaPath(shardDir: string, slice: string): string {
+  return join(shardDir, "surface", `${slice}.schema.json`);
+}
 
 function toShape(node: any): ShapeType {
   if (node.enum) return { kind: "enum", values: node.enum.map(String) };
@@ -31,9 +35,11 @@ function toShape(node: any): ShapeType {
 
 export const jsonSchemaAdapter: SurfaceAdapter = {
   name: "jsonschema",
+  exists(shardDir: string, slice: string): boolean {
+    return existsSync(schemaPath(shardDir, slice));
+  },
   extract(shardDir: string, slice: string): StructuralSurface {
-    const path = join(shardDir, "surface", `${slice}.schema.json`);
-    const schema = JSON.parse(readFileSync(path, "utf8"));
+    const schema = JSON.parse(readFileSync(schemaPath(shardDir, slice), "utf8"));
     const name = schema.title ?? slice;
     return {
       slice,

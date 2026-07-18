@@ -4,6 +4,8 @@ import { jsonSchemaAdapter } from "./jsonschema";
 
 export interface SurfaceAdapter {
   name: string;
+  /** True when the shard has actually materialized its surface file for this slice. */
+  exists(shardDir: string, slice: string): boolean;
   extract(shardDir: string, slice: string): StructuralSurface;
 }
 

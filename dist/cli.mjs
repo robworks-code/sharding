@@ -7359,7 +7359,7 @@ var require_dist = __commonJS({
 });
 
 // src/check/shardCheck.ts
-import { existsSync as existsSync3, readFileSync as readFileSync5 } from "node:fs";
+import { existsSync as existsSync5, readFileSync as readFileSync5 } from "node:fs";
 import { join as join5 } from "node:path";
 
 // src/contract/model.ts
@@ -7369,7 +7369,17 @@ function loadDir(dir, into) {
   if (!existsSync(dir)) return;
   for (const file of readdirSync(dir)) {
     if (!file.endsWith(".json")) continue;
-    const surface = JSON.parse(readFileSync(join(dir, file), "utf8"));
+    const path = join(dir, file);
+    const surface = JSON.parse(readFileSync(path, "utf8"));
+    if (typeof surface.slice !== "string" || surface.slice.length === 0) {
+      throw new Error(`contract file ${path} is missing a string "slice" field (expected canonical { slice, symbols } surface)`);
+    }
+    if (typeof surface.symbols !== "object" || surface.symbols === null) {
+      throw new Error(`contract slice "${surface.slice}" (${path}) is missing a "symbols" object`);
+    }
+    if (into[surface.slice]) {
+      throw new Error(`contract slice "${surface.slice}" is declared twice (duplicate in ${path})`);
+    }
     into[surface.slice] = surface;
   }
 }
@@ -7411,19 +7421,27 @@ function shardForDir(m, relDir) {
 }
 
 // src/adapters/identity.ts
-import { readFileSync as readFileSync3 } from "node:fs";
+import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
 import { join as join3 } from "node:path";
+function surfacePath(shardDir, slice) {
+  return join3(shardDir, "surface", `${slice}.json`);
+}
 var identityAdapter = {
   name: "identity",
+  exists(shardDir, slice) {
+    return existsSync3(surfacePath(shardDir, slice));
+  },
   extract(shardDir, slice) {
-    const path = join3(shardDir, "surface", `${slice}.json`);
-    return JSON.parse(readFileSync3(path, "utf8"));
+    return JSON.parse(readFileSync3(surfacePath(shardDir, slice), "utf8"));
   }
 };
 
 // src/adapters/jsonschema.ts
-import { readFileSync as readFileSync4 } from "node:fs";
+import { existsSync as existsSync4, readFileSync as readFileSync4 } from "node:fs";
 import { join as join4 } from "node:path";
+function schemaPath(shardDir, slice) {
+  return join4(shardDir, "surface", `${slice}.schema.json`);
+}
 function toShape(node) {
   if (node.enum) return { kind: "enum", values: node.enum.map(String) };
   if (node.type === "object" || node.type === void 0 && node.properties) {
@@ -7451,9 +7469,11 @@ function toShape(node) {
 }
 var jsonSchemaAdapter = {
   name: "jsonschema",
+  exists(shardDir, slice) {
+    return existsSync4(schemaPath(shardDir, slice));
+  },
   extract(shardDir, slice) {
-    const path = join4(shardDir, "surface", `${slice}.schema.json`);
-    const schema = JSON.parse(readFileSync4(path, "utf8"));
+    const schema = JSON.parse(readFileSync4(schemaPath(shardDir, slice), "utf8"));
     const name = schema.title ?? slice;
     return {
       slice,
@@ -7594,12 +7614,16 @@ function checkShard(root, shardName) {
   const shardDir = join5(root, entry.dir);
   const findings = [];
   const rulesPath = join5(root, "contract", "conventions.json");
-  const rules = existsSync3(rulesPath) ? JSON.parse(readFileSync5(rulesPath, "utf8")) : {};
+  const rules = existsSync5(rulesPath) ? JSON.parse(readFileSync5(rulesPath, "utf8")) : {};
   const adapter = getAdapter(entry.adapter);
   for (const slice of entry.provides) {
     const expected = contract.slices[slice];
     if (!expected) {
       findings.push({ slice, kind: "missing-symbol", location: slice });
+      continue;
+    }
+    if (!adapter.exists(shardDir, slice)) {
+      findings.push({ slice, kind: "missing-symbol", location: `${slice} (no provided surface)` });
       continue;
     }
     const extracted = adapter.extract(shardDir, slice);
@@ -7613,7 +7637,7 @@ function checkShard(root, shardName) {
       continue;
     }
     const snapPath = join5(shardDir, "surface", "consumed", `${slice}.json`);
-    if (!existsSync3(snapPath)) {
+    if (!existsSync5(snapPath)) {
       findings.push({ slice, kind: "missing-symbol", location: `${slice} (no consumed snapshot)` });
       continue;
     }
@@ -7638,12 +7662,12 @@ function status(root) {
 
 // src/check/phaseCheck.ts
 var import_yaml2 = __toESM(require_dist(), 1);
-import { existsSync as existsSync4, readFileSync as readFileSync6 } from "node:fs";
+import { existsSync as existsSync6, readFileSync as readFileSync6 } from "node:fs";
 import { join as join6 } from "node:path";
 import { execSync } from "node:child_process";
 function loadPhases(root) {
   const path = join6(root, "contract", "phases.yaml");
-  if (!existsSync4(path)) return [];
+  if (!existsSync6(path)) return [];
   return (0, import_yaml2.parse)(readFileSync6(path, "utf8")).phases ?? [];
 }
 function defaultRunner(cmd, cwd) {

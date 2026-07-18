@@ -13,6 +13,15 @@ describe("identity adapter", () => {
     expect(getAdapter("identity").extract(dir, "Order")).toEqual(surface);
   });
 
+  it("reports existence of the surface file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "shard-"));
+    mkdirSync(join(dir, "surface"), { recursive: true });
+    const adapter = getAdapter("identity");
+    expect(adapter.exists(dir, "Order")).toBe(false);
+    writeFileSync(join(dir, "surface", "Order.json"), JSON.stringify({ slice: "Order", symbols: {} }));
+    expect(adapter.exists(dir, "Order")).toBe(true);
+  });
+
   it("rejects unknown adapters", () => {
     expect(() => getAdapter("nope")).toThrow(/unknown adapter/);
   });

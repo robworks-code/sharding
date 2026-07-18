@@ -31,6 +31,14 @@ describe("checkShard", () => {
     expect(result.findings).toEqual([]);
   });
 
+  it("reports a finding (does not throw) when the provided surface file is absent", () => {
+    const { root } = scaffold() as any;
+    // No surface/Order.json written - the shard hasn't been built yet.
+    const result = checkShard(root, "orders");
+    expect(result.clean).toBe(false);
+    expect(result.findings).toContainEqual({ slice: "Order", kind: "missing-symbol", location: "Order (no provided surface)" });
+  });
+
   it("reports drift when the declared surface diverges", () => {
     const { root, order } = scaffold() as any;
     const drifted = structuredClone(order);

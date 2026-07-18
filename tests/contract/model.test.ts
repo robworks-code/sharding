@@ -28,4 +28,29 @@ describe("loadContract", () => {
   it("throws when contract dir missing", () => {
     expect(() => loadContract(join(root, "nope"))).toThrow(/no contract/);
   });
+
+  it("rejects a slice file that lacks a string slice field", () => {
+    // A free-form interface shape with no canonical `slice` key.
+    writeFileSync(
+      join(root, "contract", "schemas", "bad.json"),
+      JSON.stringify({ interface: "events", provides: {} }),
+    );
+    expect(() => loadContract(root)).toThrow(/missing a string "slice" field/);
+  });
+
+  it("rejects a slice file that lacks a symbols object", () => {
+    writeFileSync(
+      join(root, "contract", "schemas", "nosym.json"),
+      JSON.stringify({ slice: "Widget" }),
+    );
+    expect(() => loadContract(root)).toThrow(/missing a "symbols" object/);
+  });
+
+  it("rejects a duplicate slice declaration", () => {
+    writeFileSync(
+      join(root, "contract", "schemas", "dupe.json"),
+      JSON.stringify({ slice: "Order", symbols: {} }),
+    );
+    expect(() => loadContract(root)).toThrow(/declared twice/);
+  });
 });
