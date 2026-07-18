@@ -1,2 +1,6 @@
 node_modules/
 dist/
+
+# Demo fixtures: per-shard guardrail files are legitimate plugin artifacts.
+# The user's global ignore excludes **/CLAUDE.md; re-include the demo ones.
+!examples/demo/**/CLAUDE.md

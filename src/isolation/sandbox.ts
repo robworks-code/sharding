@@ -1,5 +1,9 @@
 import { resolve, relative, isAbsolute } from "node:path";
 
+// NOTE: This module reimplements the containment rule that hooks/logic.mjs
+// enforces at runtime. The two must stay in sync - any changes to the rule
+// logic here must also be reflected in hooks/logic.mjs PreToolUse enforcement.
+
 // Known limitation (PoC): comparison is lexical (path.resolve normalizes "."/".."
 // but does NOT follow symlinks), so a shard containing a symlink into a sibling
 // could bypass the read boundary at the filesystem level. Acceptable under this
