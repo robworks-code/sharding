@@ -1,0 +1,890 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sharding - A new way to build with Claude Code</title>
+<meta name="description" content="Build a large product as isolated shards, each in its own Claude Code session, coupled only through a frozen contract, and gated mechanically instead of remembered.">
+<meta property="og:title" content="Sharding - A new way to build with Claude Code">
+<meta property="og:description" content="LLM inconsistency is a given. Make the shared truth external, small, and mechanically enforced.">
+<meta property="og:type" content="website">
+<style>
+:root {
+  --bg:      #0d1117;
+  --panel:   #161b22;
+  --rule:    #2b3440;
+  --fg:      #e6edf3;
+  --muted:   #9daab7;
+  --accent:  #56d364;
+  --warn:    #e3b341;
+  --deny:    #ff7b72;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg:      #fbfbf9;
+    --panel:   #f0f0ec;
+    --rule:    #d3d3cb;
+    --fg:      #14181d;
+    --muted:   #4d5661;
+    --accent:  #0f7b3f;
+    --warn:    #8a5a00;
+    --deny:    #b42318;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: 20px;
+  line-height: 1.7;
+  overflow-x: hidden;
+  overflow-wrap: break-word;
+}
+
+.wrap {
+  max-width: 74ch;
+  margin: 0 auto;
+  padding: 0 1.25rem 6rem;
+}
+
+a { color: var(--accent); text-underline-offset: 3px; }
+a:hover { text-decoration-thickness: 2px; }
+
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--panel);
+  color: var(--fg);
+  padding: .75rem 1rem;
+  font-family: var(--mono);
+  z-index: 10;
+}
+.skip:focus { left: 0; }
+
+/* ---------- hero ---------- */
+
+header.hero {
+  border-bottom: 1px solid var(--rule);
+  padding: 4rem 0 2.5rem;
+  margin-bottom: 3rem;
+}
+
+h1 {
+  font-family: var(--mono);
+  font-size: 2.4rem;
+  line-height: 1.15;
+  margin: 0 0 .4rem;
+  letter-spacing: -0.01em;
+  font-weight: 700;
+}
+h1::before {
+  content: "$ ";
+  color: var(--accent);
+}
+
+.tagline {
+  font-family: var(--mono);
+  color: var(--accent);
+  font-size: 1.15rem;
+  margin: 0 0 1.75rem;
+}
+
+.hero p.lede {
+  font-size: 1.1rem;
+  margin: 0 0 1.5rem;
+}
+
+.herolinks {
+  font-family: var(--mono);
+  font-size: .95rem;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  margin-top: 1.75rem;
+}
+/* long URLs must break rather than clip: body is overflow-x:hidden */
+.herolinks a, footer a { overflow-wrap: anywhere; }
+
+/* ---------- table of contents ---------- */
+
+nav.toc {
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 4rem;
+  font-family: var(--mono);
+  font-size: .95rem;
+}
+nav.toc h2 {
+  font-size: .95rem;
+  margin: 0 0 .75rem;
+  color: var(--muted);
+  font-weight: 400;
+  text-transform: lowercase;
+}
+nav.toc h2::before { content: none; }
+nav.toc ol {
+  margin: 0;
+  padding-left: 1.4rem;
+  line-height: 1.9;
+}
+
+/* ---------- sections ---------- */
+
+section { margin-bottom: 4.5rem; }
+
+h2 {
+  font-family: var(--mono);
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 0 0 1.5rem;
+  padding-top: .5rem;
+  border-top: 1px solid var(--rule);
+}
+h2::before {
+  content: "> ";
+  color: var(--accent);
+}
+
+h3 {
+  font-family: var(--mono);
+  font-size: 1.08rem;
+  margin: 2.5rem 0 .75rem;
+  color: var(--fg);
+}
+
+p { margin: 0 0 1.25rem; }
+
+.muted { color: var(--muted); }
+
+ul.plain {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.5rem;
+}
+ul.plain > li {
+  border-left: 3px solid var(--rule);
+  padding: .1rem 0 .1rem 1.1rem;
+  margin-bottom: 1.25rem;
+}
+
+strong { font-weight: 700; }
+
+code.inl {
+  font-family: var(--mono);
+  font-size: .88em;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: .08em .35em;
+  word-break: break-word;
+}
+
+/* ---------- pull quote ---------- */
+
+blockquote.thesis {
+  margin: 0;
+  border: 1px solid var(--accent);
+  background: var(--panel);
+  padding: 1.75rem;
+  font-family: var(--mono);
+  font-size: 1.12rem;
+  line-height: 1.6;
+}
+blockquote.thesis p:last-child { margin-bottom: 0; }
+
+/* ---------- code blocks ---------- */
+
+pre {
+  font-family: var(--mono);
+  font-size: .88rem;
+  line-height: 1.6;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  padding: 1rem 1.15rem;
+  overflow-x: auto;
+  margin: 0 0 1.5rem;
+  tab-size: 2;
+}
+pre code { font: inherit; background: none; border: 0; padding: 0; }
+
+/* command blocks: prompt is generated, so it is neither selected nor copied */
+pre.cmd { border-left: 3px solid var(--accent); }
+/* width:max-content so a long command extends the <pre>'s scrollable width
+   instead of being clipped at the container edge on narrow screens */
+pre.cmd .l { display: block; width: max-content; }
+pre.cmd .l::before { content: "$ "; color: var(--accent); }
+
+pre.out { color: var(--muted); }
+
+.exit {
+  font-family: var(--mono);
+  font-size: .82rem;
+  color: var(--muted);
+  margin: -1rem 0 1.5rem;
+}
+.exit b { color: var(--fg); font-weight: 700; }
+.exit.bad b { color: var(--deny); }
+.exit.good b { color: var(--accent); }
+
+figure.dia { margin: 0 0 1.5rem; }
+figure.dia figcaption {
+  font-family: var(--mono);
+  font-size: .82rem;
+  color: var(--muted);
+  margin-top: -1rem;
+}
+
+/* ---------- mechanism list ---------- */
+
+ol.mech {
+  list-style: none;
+  counter-reset: m;
+  padding: 0;
+  margin: 0;
+}
+ol.mech > li {
+  counter-increment: m;
+  border-left: 3px solid var(--accent);
+  padding: 0 0 .25rem 1.25rem;
+  margin-bottom: 2.25rem;
+}
+ol.mech > li > h3 {
+  margin: 0 0 .6rem;
+}
+ol.mech > li > h3::before {
+  content: counter(m) "  ";
+  color: var(--accent);
+}
+
+/* ---------- steps ---------- */
+
+ol.steps {
+  list-style: none;
+  counter-reset: s;
+  padding: 0;
+  margin: 0;
+}
+ol.steps > li {
+  counter-increment: s;
+  padding-left: 3.1rem;
+  position: relative;
+  margin-bottom: 2.5rem;
+}
+ol.steps > li::before {
+  content: counter(s, decimal-leading-zero);
+  position: absolute;
+  left: 0;
+  top: .1rem;
+  font-family: var(--mono);
+  font-size: .95rem;
+  color: var(--accent);
+  border: 1px solid var(--rule);
+  padding: .05rem .45rem;
+}
+ol.steps h3 { margin: 0 0 .5rem; }
+
+.verdict {
+  font-family: var(--mono);
+  font-size: .88rem;
+  border-left: 3px solid var(--rule);
+  padding: .35rem 0 .35rem .9rem;
+  margin: 0 0 1.25rem;
+  color: var(--muted);
+}
+.verdict.pass { border-left-color: var(--accent); }
+.verdict.deny { border-left-color: var(--deny); }
+.verdict.warn { border-left-color: var(--warn); }
+.verdict b { color: var(--fg); }
+
+/* ---------- status ledger ---------- */
+
+dl.ledger { margin: 0; }
+dl.ledger dt {
+  font-family: var(--mono);
+  font-size: .95rem;
+  margin-top: 1.5rem;
+}
+dl.ledger dt.yes::before { content: "[x] "; color: var(--accent); }
+dl.ledger dt.no::before  { content: "[ ] "; color: var(--warn); }
+dl.ledger dd {
+  margin: .35rem 0 0 2.1rem;
+  color: var(--muted);
+  font-size: .95rem;
+}
+
+footer {
+  border-top: 1px solid var(--rule);
+  padding-top: 2rem;
+  font-family: var(--mono);
+  font-size: .88rem;
+  color: var(--muted);
+}
+
+@media (max-width: 640px) {
+  body { font-size: 18px; }
+  h1 { font-size: 1.85rem; }
+  h2 { font-size: 1.3rem; }
+  pre { font-size: .8rem; }
+  ol.steps > li { padding-left: 2.6rem; }
+}
+</style>
+</head>
+<body>
+
+<a class="skip" href="#main">Skip to content</a>
+
+<div class="wrap">
+
+<header class="hero">
+  <h1>sharding</h1>
+  <p class="tagline">A new way to build with Claude Code</p>
+  <p class="lede">
+    Build a large product as a set of deliberately separated components, each developed
+    in its own isolated Claude Code session, coupled only through a frozen and versioned
+    <strong>contract</strong>, and integrated in phases where every phase produces a
+    provably integrable deliverable.
+  </p>
+  <p class="lede muted">
+    The point is not that the model gets smarter. The point is that it no longer has to be.
+  </p>
+  <div class="herolinks">
+    <a href="https://github.com/robworks-code/sharding">github.com/robworks-code/sharding</a>
+    <a href="#install">install</a>
+    <a href="https://github.com/robworks-code/sharding/blob/main/docs/design.md">design spec</a>
+  </div>
+</header>
+
+<main id="main">
+
+<nav class="toc" aria-labelledby="toc-h">
+  <h2 id="toc-h">contents</h2>
+  <ol>
+    <li><a href="#failure">the failure mode</a></li>
+    <li><a href="#premise">the premise</a></li>
+    <li><a href="#thesis">the thesis</a></li>
+    <li><a href="#substrate">the substrate</a></li>
+    <li><a href="#mechanisms">three mechanisms</a></li>
+    <li><a href="#blast">drift vs change</a></li>
+    <li><a href="#demo">the demo</a></li>
+    <li><a href="#proven">what's proven</a></li>
+    <li><a href="#install">install</a></li>
+  </ol>
+</nav>
+
+<section id="failure">
+  <h2>the failure mode</h2>
+
+  <p>
+    You have felt this one. A project outgrows a single session. You split the work,
+    and for a while it goes well. Then the seams start to move.
+  </p>
+
+  <p>
+    One session names the field <code class="inl">id</code>. Another, three days later,
+    is confident it was always <code class="inl">orderId</code>. A schema picks up a
+    required field and nothing downstream notices. Someone summarizes the API into a
+    fresh session and the summary is subtly wrong, so the code built on it is subtly
+    wrong. Every one of these is individually trivial. They are also invisible until
+    integration, which is the most expensive possible moment to find them.
+  </p>
+
+  <p>
+    The usual response is to try to give the model more memory: longer context, better
+    summaries, a <code class="inl">CLAUDE.md</code> that grows until nobody reads it.
+    This treats forgetting as the bug. It isn't. It is the operating condition.
+  </p>
+
+  <p>
+    Human teams solved this a long time ago, and not by remembering harder. They solved
+    it with interfaces, versioning, and a build that fails. The reason a type error
+    stops you is not that a colleague noticed. It is that a machine checked.
+  </p>
+</section>
+
+<section id="premise">
+  <h2>the premise</h2>
+
+  <p>
+    Sharding starts by conceding the thing everyone else argues with:
+    <strong>LLM inconsistency is a given, not something to hope away.</strong>
+  </p>
+
+  <p>
+    So the system never asks a session to hold the whole product in its head. It makes
+    the shared truth external, small, and mechanically enforced. Two rules follow, and
+    almost everything else is a consequence of them:
+  </p>
+
+  <ul class="plain">
+    <li>
+      A shard can only ever see <strong>its own slice</strong> plus a
+      <strong>read-only copy of the contract</strong>. Not by convention. By hook, at
+      the tool call.
+    </li>
+    <li>
+      Any divergence from the contract is caught by <strong>deterministic tooling at a
+      gate</strong>, the same way a type error blocks a build, rather than by an agent
+      noticing.
+    </li>
+  </ul>
+
+  <p>
+    Everything lives on disk, so sessions become genuinely disposable. Close them all,
+    open fresh ones, and they re-orient from files rather than memory. A session that
+    remembers nothing is not a degraded session here. It is the expected case.
+  </p>
+</section>
+
+<section id="thesis">
+  <h2>the thesis</h2>
+
+  <p>This is a claim under test, and the repository exists to test it:</p>
+
+  <blockquote class="thesis">
+    <p>
+      N independently-driven, isolated shards, coupled only through a frozen contract
+      and gated mechanically, will snap together into an integrable deliverable at each
+      phase - despite each session being individually forgetful.
+    </p>
+  </blockquote>
+</section>
+
+<section id="substrate">
+  <h2>the substrate</h2>
+
+  <p>
+    Three artifacts do all the work, and all three are just files:
+  </p>
+
+  <figure class="dia">
+    <div role="img" aria-label="Directory tree. The project root is the conductor workspace, where Claude Code is opened to orchestrate. It contains: a contract directory holding interfaces, schemas, a conventions.json file, a phases.yaml file, and a VERSION file, all read-only to shards and enforced by hook. A shards directory containing one directory per shard, each with a SHARD.md charter, a CLAUDE.md of sandbox guardrails, and a surface directory holding the shard's declared surface. And a dot-sharding directory containing manifest.yaml, the shard graph.">
+<pre>project-root/                  <span class="muted"># conductor workspace</span>
+  contract/                    <span class="muted"># THE frozen truth; read-only to shards</span>
+    interfaces/                <span class="muted"># APIs, signatures, endpoints, events</span>
+    schemas/                   <span class="muted"># shared data shapes</span>
+    conventions.json           <span class="muted"># invariants: naming, versioning</span>
+    phases.yaml                <span class="muted"># phases + acceptance criteria</span>
+    VERSION                    <span class="muted"># frozen while a phase is open</span>
+  shards/
+    &lt;shard-name&gt;/
+      SHARD.md                 <span class="muted"># charter: PROVIDES vs CONSUMES</span>
+      CLAUDE.md                <span class="muted"># sandbox guardrails</span>
+      surface/                 <span class="muted"># declared surface (what gets diffed)</span>
+      ...shard code...
+  .sharding/
+    manifest.yaml              <span class="muted"># the shard graph</span></pre>
+    </div>
+  </figure>
+
+  <h3>1. the contract</h3>
+  <p>
+    Small, external, frozen, versioned. The only thing a shard is permitted to couple
+    to. It holds interfaces, shared data shapes, invariants like error and naming
+    conventions, and the definition of what each phase must prove.
+  </p>
+
+  <h3>2. the manifest</h3>
+  <p>
+    The graph. For each shard: where it lives, which contract slices it
+    <strong>provides</strong>, which it <strong>consumes</strong>, and which surface
+    adapter it uses. This is what tells the checker what each shard is on the hook for.
+  </p>
+
+  <pre class="out"><code>contractVersion: v1
+currentPhase: phase-1
+shards:
+  orders:
+    dir: shards/orders
+    adapter: identity
+    provides: [OrderAPI, Order]
+    consumes: []
+  gateway:
+    dir: shards/gateway
+    adapter: identity
+    provides: []
+    consumes: [OrderAPI, Order]</code></pre>
+
+  <h3>3. the declared surface</h3>
+  <p>
+    Each shard commits a machine-checkable statement of what it exposes. The checker
+    diffs that statement structurally against the contract slice the manifest says it
+    provides. Structurally, not textually: it compares declared shapes, which is what
+    makes the result deterministic regardless of how the model chose to write the code.
+  </p>
+
+  <p class="muted">
+    Adapters turn a stack's real output into that structural surface, so the diff engine
+    stays language-agnostic. A stack with no adapter yet degrades honestly to gate-only
+    rather than reporting a green check it cannot justify.
+  </p>
+</section>
+
+<section id="mechanisms">
+  <h2>three mechanisms</h2>
+
+  <p>
+    Each layer is deterministic and none of them depends on anyone remembering anything.
+  </p>
+
+  <ol class="mech">
+    <li>
+      <h3>isolate</h3>
+      <p>
+        A <code class="inl">PreToolUse</code> hook confines a session opened inside
+        <code class="inl">shards/&lt;name&gt;/</code> to that directory plus the
+        read-only contract. Reaching into a sibling shard's internals is denied at the
+        tool call, before the read happens. Writing to the contract from a shard is
+        denied outright.
+      </p>
+      <p class="muted">
+        This is what makes "it can only see its slice" a fact rather than an
+        instruction. A shard cannot accidentally couple to another shard's
+        implementation, because it cannot look at it.
+      </p>
+    </li>
+
+    <li>
+      <h3>diff</h3>
+      <p>
+        <code class="inl">/shard-check</code> extracts the shard's declared surface and
+        diffs it against its contract slice, on the provide side and the consume side
+        both. Findings carry a precise location, not a vague complaint.
+      </p>
+      <p>
+        A <code class="inl">Stop</code> hook runs the same check when a session tries to
+        wrap up, so <strong>a drifted shard cannot declare itself done.</strong> That
+        matters more than it sounds: the most common way this fails without tooling is a
+        confident completion claim that is quietly wrong.
+      </p>
+    </li>
+
+    <li>
+      <h3>gate</h3>
+      <p>
+        <code class="inl">/shard-phase-check</code> runs the drift check across every
+        participating shard, then runs the phase's acceptance criteria. A phase closes
+        only when all provide-side diffs are clean, all consume-side checks are clean,
+        and the acceptance suite is green.
+      </p>
+      <p class="muted">
+        This is the deterministic definition of "done and it snaps together." Nothing
+        advances on an assurance.
+      </p>
+    </li>
+  </ol>
+</section>
+
+<section id="blast">
+  <h2>drift vs change</h2>
+
+  <p>
+    Here is the idea the rest of the system is built around.
+    <strong>Drift and change are the same mechanical event seen from opposite
+    sides.</strong> A shard diverging from the frozen contract is drift, and it is
+    illegal. The conductor deliberately altering the contract is change, and it is
+    legal, versioned, and loud.
+  </p>
+
+  <p>
+    The system tells them apart by two things it can actually check: who is allowed to
+    touch <code class="inl">contract/</code>, which the isolation hook enforces, and
+    whether the change was made deliberately at the conductor level.
+  </p>
+
+  <h3>drift, caught precisely</h3>
+
+  <p>
+    A shard renames one field in its response. One field, in one place. Here is what the
+    engine says about it:
+  </p>
+
+  <pre class="cmd"><code><span class="l">node dist/cli.mjs check orders</span></code></pre>
+  <pre class="out"><code>{
+  "shard": "orders",
+  "clean": false,
+  "findings": [
+    {
+      "slice": "OrderAPI",
+      "kind": "missing-field",
+      "location": "placeOrder.response.id",
+      "expected": "string"
+    },
+    {
+      "slice": "OrderAPI",
+      "kind": "extra-field",
+      "location": "placeOrder.response.orderId",
+      "actual": "string"
+    }
+  ]
+}</code></pre>
+  <p class="exit bad">exit <b>1</b></p>
+
+  <p>
+    Not "something looks off in the orders shard." The exact path, what the contract
+    expected, what the shard actually declared. And because it exits non-zero, it drops
+    straight into a script or a CI step without anyone reading it.
+  </p>
+
+  <h3>change, with a computed blast radius</h3>
+
+  <p>
+    Now the other direction. The conductor adds a required
+    <code class="inl">currency</code> field to the <code class="inl">Order</code> schema
+    and bumps the contract. This is a legitimate change. The question that normally gets
+    lost - <em>who does this break?</em> - stops being a question anyone has to answer
+    from memory:
+  </p>
+
+  <pre class="cmd"><code><span class="l">node dist/cli.mjs status</span></code></pre>
+  <pre class="out"><code>{
+  "contractVersion": "v2",
+  "currentPhase": "phase-1",
+  "shards": [
+    {
+      "shard": "orders",
+      "clean": false,
+      "findings": [
+        { "slice": "Order", "kind": "missing-field",
+          "location": "Order.currency", "expected": "string" }
+      ]
+    },
+    {
+      "shard": "gateway",
+      "clean": false,
+      "findings": [
+        { "slice": "Order", "kind": "missing-field",
+          "location": "Order.currency", "expected": "string" }
+      ]
+    }
+  ],
+  "blastRadius": [
+    "orders",
+    "gateway"
+  ]
+}</code></pre>
+  <p class="exit bad">exit <b>1</b></p>
+
+  <p>
+    Both the provider and the consumer light up, each with the specific field that moved
+    under them. No shard can quietly stay on the old shape, because the next check and
+    the Stop hook will both catch it.
+  </p>
+
+  <p class="muted">
+    Worth being precise about how this works: the blast radius is derived from
+    structural content diffs, not from comparing version strings. A shard is in the
+    radius because its declared surface no longer matches the contract's actual shape.
+    <code class="inl">VERSION</code> is the freeze marker that keeps the target from
+    moving under a working shard; it is not itself the detection mechanism.
+  </p>
+
+  <p>
+    That is the whole trick. The thing a growing project loses track of first becomes a
+    query you can run.
+  </p>
+</section>
+
+<section id="demo">
+  <h2>the demo</h2>
+
+  <p>
+    The repository ships a two-shard demo that exercises the real engine end to end.
+    <code class="inl">orders</code> provides an Order API. <code class="inl">gateway</code>
+    consumes it. They are never allowed to see each other.
+  </p>
+
+  <ol class="steps">
+    <li>
+      <h3>scaffold the workspace</h3>
+      <p>
+        <code class="inl">/shard-init</code> at the root creates
+        <code class="inl">contract/</code>, <code class="inl">shards/</code>, and the
+        manifest, and records which surface adapter this project uses.
+      </p>
+    </li>
+    <li>
+      <h3>author and freeze the contract</h3>
+      <p>
+        <code class="inl">/shard-contract</code> defines the
+        <code class="inl">OrderAPI</code> interface and the
+        <code class="inl">Order</code> schema, sets phase one's acceptance criteria, and
+        freezes at v1. From here the target does not move.
+      </p>
+    </li>
+    <li>
+      <h3>register the shards</h3>
+      <p>
+        <code class="inl">/shard-new orders</code> and
+        <code class="inl">/shard-new gateway</code> create each directory with its
+        charter and sandbox guardrails, and record in the manifest what each one
+        provides and consumes.
+      </p>
+    </li>
+    <li>
+      <h3>build the provider, in a session that knows nothing</h3>
+      <p>
+        Open a fresh session in <code class="inl">shards/orders/</code>. SessionStart
+        injects its charter, its contract slices, and the isolation rule. It builds the
+        service and emits its surface. When it tries to finish, the Stop hook runs the
+        check.
+      </p>
+      <p class="verdict pass">check <b>clean</b> against OrderAPI v1 - completion allowed</p>
+    </li>
+    <li>
+      <h3>build the consumer, and watch it get stopped</h3>
+      <p>
+        A fresh session in <code class="inl">shards/gateway/</code> builds against
+        <code class="inl">Order</code> and <code class="inl">OrderAPI</code> as seen only
+        through the contract. It tries to peek at how <code class="inl">orders</code>
+        actually implemented things.
+      </p>
+      <p class="verdict deny">PreToolUse <b>denied</b> - shards/orders/ is outside this shard's sandbox</p>
+      <p class="muted">
+        This is the step that usually surprises people. The consumer is not trusted to
+        resist a shortcut. It is prevented from taking one.
+      </p>
+    </li>
+    <li>
+      <h3>close the phase</h3>
+      <p>
+        Back at the root, the gate runs every shard's diff plus the phase's acceptance
+        criteria.
+      </p>
+      <pre class="cmd"><code><span class="l">node dist/cli.mjs phase-check</span></code></pre>
+      <pre class="out"><code>{
+  "phase": "phase-1",
+  "shardsClean": true,
+  "acceptancePassed": true,
+  "passed": true,
+  "findings": [],
+  "acceptanceOutput": ""
+}</code></pre>
+      <p class="exit good">exit <b>0</b></p>
+    </li>
+    <li>
+      <h3>stress it</h3>
+      <p>
+        Change the contract on purpose and re-run <code class="inl">status</code>. That
+        is the blast radius shown above: both shards flagged, each with the exact field
+        that moved. Fix, re-gate, continue.
+      </p>
+      <p class="muted">
+        Step seven is the real proof. It is the moment a human organization starts
+        losing threads, and the moment this system starts computing instead of
+        remembering.
+      </p>
+    </li>
+  </ol>
+</section>
+
+<section id="proven">
+  <h2>what's proven</h2>
+
+  <p>
+    This is a proof of concept and it is worth being straight about which parts are
+    demonstrated and which are not.
+  </p>
+
+  <h3>demonstrated</h3>
+  <dl class="ledger">
+    <dt class="yes">isolation is real</dt>
+    <dd>A shard session cannot read another shard's internals or write the contract. The denials fire at the tool call.</dd>
+
+    <dt class="yes">drift cannot be declared done</dt>
+    <dd>The Stop hook blocks a completion claim from a shard that diverged, with a precise finding.</dd>
+
+    <dt class="yes">blast radius is computed</dt>
+    <dd>A contract change surfaces every affected shard and the exact field, rather than relying on anyone tracking it.</dd>
+
+    <dt class="yes">the gate means something</dt>
+    <dd>A phase goes green only when every diff is clean and the acceptance suite actually passes.</dd>
+
+    <dt class="yes">sessions are disposable</dt>
+    <dd>Close everything, reopen fresh, and the on-disk truth fully re-orients each session.</dd>
+  </dl>
+
+  <h3>not yet</h3>
+  <dl class="ledger">
+    <dt class="no">a standalone orchestrator</dt>
+    <dd>Something that actively drives the shard sessions is the natural next step and is deliberately out of scope here.</dd>
+
+    <dt class="no">broad adapter coverage</dt>
+    <dd>The engine ships identity and JSON Schema adapters. Other stacks need an adapter to get surface diffing, and degrade to gate-only until then.</dd>
+
+    <dt class="no">a large-N trial</dt>
+    <dd>The mechanism is proven on two shards. The thesis is about N, and N is where it gets interesting.</dd>
+  </dl>
+</section>
+
+<section id="install">
+  <h2>install</h2>
+
+  <p>From the marketplace, inside Claude Code:</p>
+
+  <pre class="cmd"><code><span class="l">/plugin marketplace add ringo380/robworks-claude-code-plugins</span><span class="l">/plugin install sharding@robworks-claude-code-plugins</span></code></pre>
+
+  <p>Then reload plugins, or restart the session.</p>
+
+  <h3>the commands</h3>
+  <p>
+    Once installed the commands are namespaced, so
+    <code class="inl">/shard-status</code> becomes
+    <code class="inl">/sharding:shard-status</code>.
+  </p>
+
+  <ul class="plain">
+    <li><code class="inl">/shard-init</code> - scaffold the conductor workspace. One time.</li>
+    <li><code class="inl">/shard-contract</code> - author or amend the contract, then freeze and bump. Conductor only.</li>
+    <li><code class="inl">/shard-new &lt;name&gt;</code> - register a shard with its provides and consumes.</li>
+    <li><code class="inl">/shard-check [name]</code> - diff a shard's surface against the contract.</li>
+    <li><code class="inl">/shard-phase-check</code> - the gate.</li>
+    <li><code class="inl">/shard-status</code> - the graph, the phase, per-shard drift, blast radius.</li>
+  </ul>
+
+  <h3>without the plugin</h3>
+  <p>
+    Every operation is also a plain CLI, so the same workflow runs in CI or any editor.
+    Each command exits non-zero on drift or a failing gate.
+  </p>
+
+  <pre class="cmd"><code><span class="l">npm install</span><span class="l">npm run cli -- check &lt;shard&gt;</span><span class="l">npm run cli -- status</span><span class="l">npm run cli -- phase-check</span></code></pre>
+
+  <p class="muted">
+    The only runtime dependency is <code class="inl">yaml</code>. Everything else is dev
+    tooling.
+  </p>
+</section>
+
+</main>
+
+<footer>
+  <p>
+    <a href="https://github.com/robworks-code/sharding">github.com/robworks-code/sharding</a>
+    &nbsp;/&nbsp;
+    <a href="https://github.com/robworks-code/sharding/blob/main/docs/design.md">design spec</a>
+    &nbsp;/&nbsp;
+    <a href="https://claude.com/claude-code">Claude Code</a>
+  </p>
+  <p>Proof of concept. Every command output on this page is real output from the demo.</p>
+</footer>
+
+</div>
+</body>
+</html>
