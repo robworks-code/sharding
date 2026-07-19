@@ -1,7 +1,8 @@
 # Sharding - Design Spec
 
 **Created**: 2026-07-18
-**Status**: Design approved - ready for implementation planning
+**Status**: Implemented. This document is the design record for the proof of concept;
+the README and the project site describe current behavior.
 
 ## Overview
 
@@ -58,7 +59,8 @@ project-root/                     # conductor workspace (open Claude Code here t
   contract/                       # THE frozen truth. Read-only to shards (hook-enforced).
     interfaces/                   # APIs, function sigs, endpoints, event names   (A)
     schemas/                      # shared data shapes: JSON Schema / shared types (B)
-    conventions.md                # invariants: auth, errors, naming, versioning   (C)
+    conventions.md                # invariants in prose: auth, errors, naming, versioning (C)
+    conventions.json              # the checkable subset of those, enforced by the linter
     phases.yaml                   # phase defs + participating shards + acceptance criteria (D)
     VERSION                       # contract version; frozen per phase
   shards/
@@ -66,9 +68,12 @@ project-root/                     # conductor workspace (open Claude Code here t
       SHARD.md                    # charter: purpose, contract slices PROVIDED vs CONSUMED, boundaries
       CLAUDE.md                   # sandbox guardrails injected for sessions opened here
       surface/                    # the shard's DECLARED provided surface (what the checker diffs)
+        <slice>.json              # one per PROVIDED slice
+        consumed/<slice>.json     # snapshot of each CONSUMED slice, as built against
+        ACKNOWLEDGED              # contract version this shard last reviewed itself against
       ...shard code...
   .sharding/
-    manifest.yaml                 # the shard graph: names, dirs, provides/consumes map, per-shard phase status, adapter per shard
+    manifest.yaml                 # the shard graph: names, dirs, provides/consumes map, adapter per shard
   CLAUDE.md                       # conductor guidance (root)
 ```
 
@@ -97,6 +102,7 @@ from it is caught mechanically.**
 | `/shard-contract` | root | Author or amend the contract, then **freeze**: bump `contract/VERSION`, snapshot for the current phase, regenerate any A-style codegen. Conductor-only. |
 | `/shard-new <name>` | root | Registers a shard: creates `shards/<name>/` with `SHARD.md` + sandbox `CLAUDE.md` + empty `surface/`; adds it to the manifest with its provides/consumes slices and adapter. |
 | `/shard-check [name]` | anywhere | Mechanism **B**: extract/read the shard's declared surface, diff against its contract slice, report drift precisely. Checks both provide-side and consume-side. |
+| `/shard-ack` | shard | Acknowledge this shard against the current contract version after reviewing what the bump changed. Records into the shard's own `surface/ACKNOWLEDGED`; clears the staleness that blocks the phase gate. |
 | `/shard-phase-check` | root | The gate (**C/D**): run `/shard-check` across all participating shards + the phase's integration/acceptance suite from `phases.yaml`. |
 | `/shard-status` | anywhere | Prints the graph: shards, current phase, per-shard drift/clean state, contract version, blast radius after a change. |
 
@@ -120,7 +126,7 @@ self-orient without re-explanation.
   acknowledgment is recorded shard-locally rather than in the manifest. A shard that
   shells out to escape its sandbox is defeating a boundary it is not asked to cross, and
   the phase gate still measures its surface independently either way.
-- **`Stop` / `SubagentStop`** - run `/shard-check` for the current shard when it tries to
+- **`Stop`** - run `/shard-check` for the current shard when it tries to
   wrap up. **If it drifted from the frozen contract, block the completion claim** and
   surface the drift report.
 
@@ -145,7 +151,7 @@ A `/shard-check` run:
 3. **Consume-side check**: confirm the shard's declared expectations of Z still match the
    current frozen contract (catches the contract changing under a shard that wasn't
    looking).
-4. **Convention lint**: apply the checkable rules in `conventions.md` (naming, error
+4. **Convention lint**: apply the checkable rules in `conventions.json` (naming, error
    envelope shape, version tags) to the surface.
 5. Emit a structured report: `clean`, or a list of `{slice, kind, expected, actual,
    location}`.

@@ -32,6 +32,9 @@ project-root/                  # conductor workspace - open Claude Code here to 
       SHARD.md                 # charter: what this shard PROVIDES vs CONSUMES
       CLAUDE.md                # sandbox guardrails injected for sessions opened here
       surface/                 # the shard's declared surface (what the checker diffs)
+        <slice>.json           # one per PROVIDED slice
+        consumed/<slice>.json  # snapshot of each CONSUMED slice, as built against
+        ACKNOWLEDGED           # contract version this shard last reviewed itself against
       ...shard code...
   .sharding/
     manifest.yaml              # the shard graph: dirs, provides/consumes, adapter per shard
@@ -53,7 +56,7 @@ Three mechanisms enforce the boundaries:
   - `cli.ts` - a pure, testable dispatch over every engine operation
 - `hooks/`, `commands/`, `skills/`, `.claude-plugin/` - the Claude Code plugin surface (SessionStart / PreToolUse / Stop hooks, the `/shard-*` commands, and the sharding skill)
 - `examples/demo/` - a two-shard demo (`orders` provides an Order API; `gateway` consumes it) whose end-to-end test drives the real engine
-- `tests/` - the test suite (66 tests across 17 files)
+- `tests/` - the test suite (75 tests across 17 files)
 - `docs/design.md` - the design spec: premise, scope decisions, and the mechanism in full
 
 ## The plugin commands
@@ -78,10 +81,17 @@ The same operations are available as a plain CLI, so the workflow also works in 
 npm install
 
 npm run cli -- check <shard>      # diff one shard's surface against the contract
-npm run cli -- ack <shard>        # acknowledge the shard against the current contract version
 npm run cli -- status             # graph + per-shard state + blast radius + stale shards
 npm run cli -- phase-check        # the phase gate
 npm run cli -- orient --dir <d>   # is this dir a shard or the conductor?
+```
+
+`ack` is the exception: it takes no argument and derives the shard from the working
+directory, and `npm run` resets the working directory to the package root. Invoke it
+directly, from inside the shard:
+
+```bash
+cd shards/<name> && node /path/to/sharding/dist/cli.mjs ack
 ```
 
 Each command exits non-zero when it finds drift or a failing gate, so it drops straight into a script.

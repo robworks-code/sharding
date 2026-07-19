@@ -15,15 +15,19 @@ structurally invisible change still holds. The record is written into this
 shard's own `surface/ACKNOWLEDGED`, so acknowledging never touches conductor
 state.
 
-1. Confirm the current directory is inside `shards/<name>/`. If it is not, stop: the conductor does not acknowledge on a shard's behalf.
-2. Run `node ${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs check <name>` and read `verifiedAgainst` and `versionStale`.
-3. If it reports drift (exit non-zero), stop: resolve the drift first. Check this before staleness - the two are independent, and a shard can be drifted while already acknowledged.
-4. If `versionStale` is false, report "already acknowledged against <version>" and stop.
-5. **Review before recording.** Diff the contract slices this shard provides and consumes against the version in `verifiedAgainst`. Report what changed, and whether this shard's behavior still satisfies it. If anything requires a code change, make it and re-check before acknowledging.
-6. Only once the shard genuinely conforms, run: `node ${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs ack`
-7. Report the new `verifiedAgainst` version.
+Everything this command needs is inside the sandbox. Do not run `/shard-check`
+or the `check` subcommand here - those read the conductor's manifest relative to
+the working directory and will fail from inside a shard.
 
-Acknowledging without step 5 defeats the purpose of the gate. The record is
+1. Confirm the current directory is inside `shards/<name>/`. If it is not, stop: the conductor does not acknowledge on a shard's behalf.
+2. Read `contract/VERSION` (the version now frozen) and this shard's `surface/ACKNOWLEDGED` (the version it last reviewed; absent means it has never acknowledged one).
+3. If the two already match, report "already acknowledged against <version>" and stop.
+4. **Review before recording.** Compare the contract slices this shard provides and consumes as they stand now against what it was built against - `surface/consumed/<slice>.json` holds the consumed shapes as of that build. Report what changed and whether this shard's behavior still satisfies it. If anything requires a code change, make it first.
+5. Only once the shard genuinely conforms, run: `node ${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs ack`
+6. Report the new `verifiedAgainst` version from the command's output.
+
+Acknowledging without step 4 defeats the purpose of the gate. The record is
 testimony, not proof - `/shard-phase-check` still measures this shard for real
-drift independently, so an acknowledgment can never launder a structural
+structural drift independently, and the `Stop` hook blocks a drifted shard from
+declaring itself done, so an acknowledgment can never launder a structural
 problem into a green gate.
