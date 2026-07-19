@@ -12,11 +12,12 @@ A sharded project develops one product as isolated **shards** that couple ONLY t
 - Build to satisfy the contract slices your `SHARD.md` says you PROVIDE. Keep `surface/<slice>.json` (or `<slice>.schema.json` for the jsonschema adapter) in sync with what you actually expose.
 - For each slice you CONSUME, snapshot the contract version you built against into `surface/consumed/<slice>.json`.
 - Before finishing, run `/shard-check`. The Stop hook runs it too and will block you if you have drifted.
+- If `/shard-check` reports `versionStale`, the conductor froze a new contract version you have not looked at. Review what changed in the slices you provide and consume, fix anything that no longer holds, then run `/shard-ack`. That records the version into your own `surface/ACKNOWLEDGED` - you never write conductor state. Nothing blocks you mid-task, but the phase gate will not close until you have done it.
 
 ## If you are the conductor (repo root)
 - Change the contract only via `/shard-contract`, which bumps `contract/VERSION`. That bump is what distinguishes a legitimate change from drift.
 - `/shard-status` shows the computed blast radius after any change, plus any shards still stale against the current contract version.
-- A version bump marks every shard stale until it acknowledges the new contract. Staleness is not drift: `/shard-check` stays green and the Stop hook still lets a shard finish, but the phase gate blocks. Clear it with `/shard-ack <name>` after reviewing what actually changed - a clean structural diff alone never re-blesses a shard, which is the point for changes a shape diff cannot see.
+- A version bump marks every shard stale until that shard acknowledges the new contract. Staleness is not drift: `/shard-check` stays green and the Stop hook still lets a shard finish, but the phase gate blocks. Only the shard itself can clear it, from its own session - you do not acknowledge on its behalf, because judging a structurally invisible change requires reading that shard's implementation. A clean structural diff alone never re-blesses a shard, which is the point for changes a shape diff cannot see.
 - `/shard-phase-check` gates a phase: every participating shard clean AND acknowledged against the frozen contract version AND the acceptance suite green. Only then close the phase and tag the snapshot.
 
 ## The one rule

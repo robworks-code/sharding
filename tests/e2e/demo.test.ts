@@ -63,12 +63,17 @@ describe("sharding e2e demo", () => {
     expect(gatedReport.shardsClean).toBe(true); // nothing drifted
     expect(gatedReport.staleShards.sort()).toEqual(["gateway", "orders"]);
 
-    // A clean diff alone must not re-bless the shards: acking is deliberate.
-    run(["ack", "orders"], root);
+    // A clean diff alone must not re-bless the shards: acking is deliberate,
+    // and each shard does it from inside its own sandbox.
+    const manifestBefore = readFileSync(join(root, ".sharding", "manifest.yaml"), "utf8");
+    run(["ack"], join(root, "shards", "orders"));
     expect(JSON.parse(run(["phase-check"], root).stdout).staleShards).toEqual(["gateway"]);
 
-    run(["ack", "gateway"], root);
+    run(["ack"], join(root, "shards", "gateway"));
     expect(JSON.parse(run(["phase-check"], root).stdout).passed).toBe(true);
+
+    // Neither shard reached outside itself to do it.
+    expect(readFileSync(join(root, ".sharding", "manifest.yaml"), "utf8")).toBe(manifestBefore);
   });
 
   it("SC4: phase-check passes only when all shards conform", () => {

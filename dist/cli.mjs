@@ -7239,7 +7239,7 @@ var require_public_api = __commonJS({
         return docs;
       return Object.assign([], { empty: true }, composer$1.streamInfo());
     }
-    function parseDocument2(source, options = {}) {
+    function parseDocument(source, options = {}) {
       const { lineCounter: lineCounter2, prettyErrors } = parseOptions(options);
       const parser$1 = new parser.Parser(lineCounter2?.addNewLine);
       const composer$1 = new composer.Composer(options);
@@ -7265,7 +7265,7 @@ var require_public_api = __commonJS({
       } else if (options === void 0 && reviver && typeof reviver === "object") {
         options = reviver;
       }
-      const doc = parseDocument2(src, options);
+      const doc = parseDocument(src, options);
       if (!doc)
         return null;
       doc.warnings.forEach((warning) => log.warn(doc.options.logLevel, warning));
@@ -7301,7 +7301,7 @@ var require_public_api = __commonJS({
     }
     exports.parse = parse3;
     exports.parseAllDocuments = parseAllDocuments;
-    exports.parseDocument = parseDocument2;
+    exports.parseDocument = parseDocument;
     exports.stringify = stringify;
   }
 });
@@ -7359,8 +7359,8 @@ var require_dist = __commonJS({
 });
 
 // src/check/shardCheck.ts
-import { existsSync as existsSync5, readFileSync as readFileSync5 } from "node:fs";
-import { join as join5 } from "node:path";
+import { existsSync as existsSync6, readFileSync as readFileSync6 } from "node:fs";
+import { join as join6 } from "node:path";
 
 // src/contract/model.ts
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -7395,7 +7395,7 @@ function loadContract(root) {
 
 // src/manifest/model.ts
 var import_yaml = __toESM(require_dist(), 1);
-import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync } from "node:fs";
+import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
 import { join as join2 } from "node:path";
 function loadManifest(root) {
   const path = join2(root, ".sharding", "manifest.yaml");
@@ -7407,21 +7407,10 @@ function loadManifest(root) {
       dir: entry.dir,
       adapter: entry.adapter,
       provides: entry.provides ?? [],
-      consumes: entry.consumes ?? [],
-      ...entry.verifiedAgainst ? { verifiedAgainst: String(entry.verifiedAgainst) } : {}
+      consumes: entry.consumes ?? []
     };
   }
   return { contractVersion: raw.contractVersion, currentPhase: raw.currentPhase, shards };
-}
-function ackShardVersion(root, shardName, version) {
-  const path = join2(root, ".sharding", "manifest.yaml");
-  if (!existsSync2(path)) throw new Error(`no manifest at ${path}`);
-  const doc = (0, import_yaml.parseDocument)(readFileSync2(path, "utf8"));
-  if (doc.getIn(["shards", shardName]) === void 0) {
-    throw new Error(`unknown shard: ${shardName}`);
-  }
-  doc.setIn(["shards", shardName, "verifiedAgainst"], version);
-  writeFileSync(path, doc.toString());
 }
 function shardForDir(m, relDir) {
   const norm = relDir.replace(/\/+$/, "");
@@ -7431,27 +7420,51 @@ function shardForDir(m, relDir) {
   return null;
 }
 
+// src/shard/ack.ts
+import { existsSync as existsSync3, mkdirSync, readFileSync as readFileSync3, writeFileSync } from "node:fs";
+import { join as join3, resolve } from "node:path";
+var ACK_FILE = "ACKNOWLEDGED";
+function locateShard(cwd) {
+  const m = resolve(cwd).match(/^(.*?)\/shards\/([^/]+)(?:\/|$)/);
+  if (!m) return null;
+  const repoRoot = m[1];
+  const shard = m[2];
+  return { repoRoot, shardDir: resolve(repoRoot, "shards", shard), shard };
+}
+function readAck(shardDir) {
+  const path = join3(shardDir, "surface", ACK_FILE);
+  if (!existsSync3(path)) return null;
+  const version = readFileSync3(path, "utf8").trim();
+  return version === "" ? null : version;
+}
+function writeAck(shardDir, version) {
+  const dir = join3(shardDir, "surface");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join3(dir, ACK_FILE), `${version}
+`);
+}
+
 // src/adapters/identity.ts
-import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
-import { join as join3 } from "node:path";
+import { existsSync as existsSync4, readFileSync as readFileSync4 } from "node:fs";
+import { join as join4 } from "node:path";
 function surfacePath(shardDir, slice) {
-  return join3(shardDir, "surface", `${slice}.json`);
+  return join4(shardDir, "surface", `${slice}.json`);
 }
 var identityAdapter = {
   name: "identity",
   exists(shardDir, slice) {
-    return existsSync3(surfacePath(shardDir, slice));
+    return existsSync4(surfacePath(shardDir, slice));
   },
   extract(shardDir, slice) {
-    return JSON.parse(readFileSync3(surfacePath(shardDir, slice), "utf8"));
+    return JSON.parse(readFileSync4(surfacePath(shardDir, slice), "utf8"));
   }
 };
 
 // src/adapters/jsonschema.ts
-import { existsSync as existsSync4, readFileSync as readFileSync4 } from "node:fs";
-import { join as join4 } from "node:path";
+import { existsSync as existsSync5, readFileSync as readFileSync5 } from "node:fs";
+import { join as join5 } from "node:path";
 function schemaPath(shardDir, slice) {
-  return join4(shardDir, "surface", `${slice}.schema.json`);
+  return join5(shardDir, "surface", `${slice}.schema.json`);
 }
 function toShape(node) {
   if (node.enum) return { kind: "enum", values: node.enum.map(String) };
@@ -7481,10 +7494,10 @@ function toShape(node) {
 var jsonSchemaAdapter = {
   name: "jsonschema",
   exists(shardDir, slice) {
-    return existsSync4(schemaPath(shardDir, slice));
+    return existsSync5(schemaPath(shardDir, slice));
   },
   extract(shardDir, slice) {
-    const schema = JSON.parse(readFileSync4(schemaPath(shardDir, slice), "utf8"));
+    const schema = JSON.parse(readFileSync5(schemaPath(shardDir, slice), "utf8"));
     const name = schema.title ?? slice;
     return {
       slice,
@@ -7622,10 +7635,10 @@ function checkShard(root, shardName) {
   const contract = loadContract(root);
   const entry = manifest.shards[shardName];
   if (!entry) throw new Error(`unknown shard: ${shardName}`);
-  const shardDir = join5(root, entry.dir);
+  const shardDir = join6(root, entry.dir);
   const findings = [];
-  const rulesPath = join5(root, "contract", "conventions.json");
-  const rules = existsSync5(rulesPath) ? JSON.parse(readFileSync5(rulesPath, "utf8")) : {};
+  const rulesPath = join6(root, "contract", "conventions.json");
+  const rules = existsSync6(rulesPath) ? JSON.parse(readFileSync6(rulesPath, "utf8")) : {};
   const adapter = getAdapter(entry.adapter);
   for (const slice of entry.provides) {
     const expected = contract.slices[slice];
@@ -7647,15 +7660,15 @@ function checkShard(root, shardName) {
       findings.push({ slice, kind: "missing-symbol", location: slice });
       continue;
     }
-    const snapPath = join5(shardDir, "surface", "consumed", `${slice}.json`);
-    if (!existsSync5(snapPath)) {
+    const snapPath = join6(shardDir, "surface", "consumed", `${slice}.json`);
+    if (!existsSync6(snapPath)) {
       findings.push({ slice, kind: "missing-symbol", location: `${slice} (no consumed snapshot)` });
       continue;
     }
-    const snapshot = JSON.parse(readFileSync5(snapPath, "utf8"));
+    const snapshot = JSON.parse(readFileSync6(snapPath, "utf8"));
     findings.push(...diffSurface(expected, snapshot));
   }
-  const verifiedAgainst = entry.verifiedAgainst ?? manifest.contractVersion;
+  const verifiedAgainst = readAck(shardDir) ?? manifest.contractVersion;
   return {
     shard: shardName,
     clean: findings.length === 0,
@@ -7682,13 +7695,13 @@ function status(root) {
 
 // src/check/phaseCheck.ts
 var import_yaml2 = __toESM(require_dist(), 1);
-import { existsSync as existsSync6, readFileSync as readFileSync6 } from "node:fs";
-import { join as join6 } from "node:path";
+import { existsSync as existsSync7, readFileSync as readFileSync7 } from "node:fs";
+import { join as join7 } from "node:path";
 import { execSync } from "node:child_process";
 function loadPhases(root) {
-  const path = join6(root, "contract", "phases.yaml");
-  if (!existsSync6(path)) return [];
-  return (0, import_yaml2.parse)(readFileSync6(path, "utf8")).phases ?? [];
+  const path = join7(root, "contract", "phases.yaml");
+  if (!existsSync7(path)) return [];
+  return (0, import_yaml2.parse)(readFileSync7(path, "utf8")).phases ?? [];
 }
 function defaultRunner(cmd, cwd) {
   try {
@@ -7731,9 +7744,9 @@ function checkPhase(root, runAcceptance = defaultRunner) {
 }
 
 // src/isolation/sandbox.ts
-import { resolve, relative, isAbsolute } from "node:path";
+import { resolve as resolve2, relative, isAbsolute } from "node:path";
 function isInside(dir, target) {
-  const rel = relative(resolve(dir), resolve(target));
+  const rel = relative(resolve2(dir), resolve2(target));
   return rel === "" || !rel.startsWith("..") && !isAbsolute(rel);
 }
 function isReadAllowed(shardDir, contractDir, target) {
@@ -7767,25 +7780,19 @@ function run(argv, root) {
       return { code: report.blastRadius.length === 0 ? 0 : 1, stdout: j(report) };
     }
     case "ack": {
-      const shard = rest[0];
-      if (!loadManifest(root).shards[shard]) {
-        return { code: 1, stdout: j({ shard, acknowledged: false, reason: `unknown shard: ${shard}` }) };
-      }
-      const result = checkShard(root, shard);
-      if (!result.clean) {
+      const loc = locateShard(root);
+      if (!loc) {
         return {
           code: 1,
           stdout: j({
-            shard,
             acknowledged: false,
-            reason: "shard has drift; resolve it before acknowledging the contract version",
-            findings: result.findings
+            reason: "not inside a shard: a shard acknowledges itself, from its own directory"
           })
         };
       }
-      const version = loadContract(root).version;
-      ackShardVersion(root, shard, version);
-      return { code: 0, stdout: j({ shard, acknowledged: true, verifiedAgainst: version }) };
+      const version = loadContract(loc.repoRoot).version;
+      writeAck(loc.shardDir, version);
+      return { code: 0, stdout: j({ shard: loc.shard, acknowledged: true, verifiedAgainst: version }) };
     }
     case "phase-check": {
       const result = checkPhase(root);

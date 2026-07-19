@@ -66,7 +66,7 @@ Used from inside Claude Code once the plugin is installed. When installed as a p
 | `/shard-contract` | root | Author or amend the contract, then freeze: bump `VERSION` and snapshot for the phase. Conductor-only. |
 | `/shard-new <name>` | root | Registers a shard: creates `shards/<name>/` and adds it to the manifest with its provides/consumes slices. |
 | `/shard-check [name]` | anywhere | Extract the shard's surface, diff against its contract slice, report drift. |
-| `/shard-ack [name]` | anywhere | Acknowledge the shard against the current contract version, after reviewing what the bump changed. |
+| `/shard-ack` | shard | Acknowledge this shard against the current contract version, after reviewing what the bump changed. Records into the shard's own directory. |
 | `/shard-phase-check` | root | The gate: run `/shard-check` across all participating shards plus the phase's acceptance suite. |
 | `/shard-status` | anywhere | Print the graph: shards, phase, per-shard drift, contract version, blast radius of a change. |
 

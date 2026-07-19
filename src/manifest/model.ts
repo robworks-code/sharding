@@ -1,18 +1,18 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parse, parseDocument } from "yaml";
+import { parse } from "yaml";
 
+/**
+ * The manifest is conductor-owned graph state. Per-shard acknowledgment of a
+ * contract version deliberately does NOT live here - it is recorded inside the
+ * shard's own directory (see src/shard/ack.ts) so acknowledging never requires
+ * a shard to write outside its sandbox.
+ */
 export interface ShardEntry {
   dir: string;
   adapter: string;
   provides: string[];
   consumes: string[];
-  /**
-   * Contract version this shard was last explicitly acknowledged against.
-   * Absent means it has never been acknowledged, in which case the manifest's
-   * top-level contractVersion is the effective baseline.
-   */
-  verifiedAgainst?: string;
 }
 
 export interface Manifest {
@@ -32,26 +32,9 @@ export function loadManifest(root: string): Manifest {
       adapter: entry.adapter,
       provides: entry.provides ?? [],
       consumes: entry.consumes ?? [],
-      ...(entry.verifiedAgainst ? { verifiedAgainst: String(entry.verifiedAgainst) } : {}),
     };
   }
   return { contractVersion: raw.contractVersion, currentPhase: raw.currentPhase, shards };
-}
-
-/**
- * Stamp a shard as acknowledged against a contract version.
- * Uses the YAML document API so comments and formatting elsewhere in the
- * manifest survive the rewrite.
- */
-export function ackShardVersion(root: string, shardName: string, version: string): void {
-  const path = join(root, ".sharding", "manifest.yaml");
-  if (!existsSync(path)) throw new Error(`no manifest at ${path}`);
-  const doc = parseDocument(readFileSync(path, "utf8"));
-  if (doc.getIn(["shards", shardName]) === undefined) {
-    throw new Error(`unknown shard: ${shardName}`);
-  }
-  doc.setIn(["shards", shardName, "verifiedAgainst"], version);
-  writeFileSync(path, doc.toString());
 }
 
 export function shardForDir(m: Manifest, relDir: string): string | null {

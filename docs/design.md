@@ -109,9 +109,17 @@ self-orient without re-explanation.
 - **`SessionStart`** - detect cwd. Inside `shards/<name>/`: inject that shard's charter +
   its consumed contract slices + the isolation rule. At root: inject conductor context.
   This is how disposable sessions re-orient from files, not memory.
-- **`PreToolUse`** (Read/Edit/Write/Bash) - if the session is sandboxed to a shard:
-  **deny reads/writes reaching outside `shards/<self>/` and read-only `contract/`**, and
-  **deny any write into `contract/`** from a shard. Makes "can only see its slice" real.
+- **`PreToolUse`** (Read/Edit/Write/NotebookEdit) - if the session is sandboxed to a
+  shard: **deny reads/writes reaching outside `shards/<self>/` and read-only
+  `contract/`**, and **deny any write into `contract/`** from a shard. Makes "can only
+  see its slice" real for the file tools.
+  **Known limit:** `Bash` is not gated. Deciding what an arbitrary shell command touches
+  means parsing shell, which is unreliable enough that a partial check would be worse
+  than none - it would read as a guarantee while leaking. So the design does not lean on
+  it: no workflow step requires a shard to write conductor state, which is why
+  acknowledgment is recorded shard-locally rather than in the manifest. A shard that
+  shells out to escape its sandbox is defeating a boundary it is not asked to cross, and
+  the phase gate still measures its surface independently either way.
 - **`Stop` / `SubagentStop`** - run `/shard-check` for the current shard when it tries to
   wrap up. **If it drifted from the frozen contract, block the completion claim** and
   surface the drift report.
@@ -191,13 +199,27 @@ check diffs against that version, so the target never moves under a working shar
    Stop hook - a bump should not interrupt every shard mid-task. It blocks at
    `/shard-phase-check`, because a phase cannot be "provably integrable" while a
    participating shard was never checked against the version the phase froze.
-5. Clearing it is deliberate: `/shard-ack <name>` stamps `verifiedAgainst` in the
-   manifest, and refuses outright if the shard has drift. A clean structural diff alone
-   never re-blesses a shard, since that is precisely the case the version channel exists
-   to catch.
+5. Clearing it is deliberate: the shard runs `/shard-ack` in its own session, which
+   records the version into that shard's `surface/ACKNOWLEDGED`. A clean structural diff
+   alone never re-blesses a shard, since that is precisely the case the version channel
+   exists to catch.
 
-A shard with no `verifiedAgainst` recorded falls back to the manifest's top-level
-`contractVersion` as its baseline.
+**Why the shard acknowledges itself.** The changes this channel exists to catch are the
+ones a shape diff cannot see, so deciding whether a shard is still conformant means
+reading that shard's implementation. The conductor deliberately does not hold that - it
+owns the graph, not the internals - so a conductor-side acknowledgment would be a blind
+stamp, strictly less informative than an informed one. The shard is the only party in a
+position to testify.
+
+That testimony is not trusted as proof. `/shard-phase-check` independently measures every
+participating shard for real structural drift, so an acknowledgment cannot launder a
+structural problem into a green gate. It clears exactly one thing: "this shard looked at
+version N."
+
+Keeping the record shard-local also keeps the isolation invariant intact. The manifest
+stays conductor-owned, and acknowledging requires no write outside the shard's own
+sandbox. A shard with no record falls back to the manifest's top-level `contractVersion`
+as its baseline.
 
 **Lifecycle:**
 

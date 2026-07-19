@@ -1,8 +1,9 @@
 import { checkShard } from "./check/shardCheck";
 import { status } from "./check/status";
 import { checkPhase } from "./check/phaseCheck";
-import { ackShardVersion, loadManifest, shardForDir } from "./manifest/model";
+import { loadManifest, shardForDir } from "./manifest/model";
 import { loadContract } from "./contract/model";
+import { locateShard, writeAck } from "./shard/ack";
 import { isReadAllowed, isWriteAllowed } from "./isolation/sandbox";
 
 function flags(argv: string[]): Record<string, string> {
@@ -30,29 +31,24 @@ export function run(argv: string[], root: string): { code: number; stdout: strin
       return { code: report.blastRadius.length === 0 ? 0 : 1, stdout: j(report) };
     }
     case "ack": {
-      const shard = rest[0];
-      // Report an unknown shard through the CLI's JSON contract rather than
-      // letting checkShard throw: /shard-ack parses this output.
-      if (!loadManifest(root).shards[shard]) {
-        return { code: 1, stdout: j({ shard, acknowledged: false, reason: `unknown shard: ${shard}` }) };
-      }
-      const result = checkShard(root, shard);
-      // Acknowledging a drifted shard would launder real drift into a green
-      // stamp, so the shard must conform before it can claim it looked.
-      if (!result.clean) {
+      // Acknowledgment is the shard's own testimony about a change no shape
+      // diff can see, so it is derived from where the session actually is and
+      // written into that shard's directory. Nothing conductor-owned is
+      // touched; the phase gate still measures the shard for real drift, so a
+      // shard cannot launder drift by claiming it looked.
+      const loc = locateShard(root);
+      if (!loc) {
         return {
           code: 1,
           stdout: j({
-            shard,
             acknowledged: false,
-            reason: "shard has drift; resolve it before acknowledging the contract version",
-            findings: result.findings,
+            reason: "not inside a shard: a shard acknowledges itself, from its own directory",
           }),
         };
       }
-      const version = loadContract(root).version;
-      ackShardVersion(root, shard, version);
-      return { code: 0, stdout: j({ shard, acknowledged: true, verifiedAgainst: version }) };
+      const version = loadContract(loc.repoRoot).version;
+      writeAck(loc.shardDir, version);
+      return { code: 0, stdout: j({ shard: loc.shard, acknowledged: true, verifiedAgainst: version }) };
     }
     case "phase-check": {
       const result = checkPhase(root);
