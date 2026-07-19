@@ -7239,7 +7239,7 @@ var require_public_api = __commonJS({
         return docs;
       return Object.assign([], { empty: true }, composer$1.streamInfo());
     }
-    function parseDocument(source, options = {}) {
+    function parseDocument2(source, options = {}) {
       const { lineCounter: lineCounter2, prettyErrors } = parseOptions(options);
       const parser$1 = new parser.Parser(lineCounter2?.addNewLine);
       const composer$1 = new composer.Composer(options);
@@ -7265,7 +7265,7 @@ var require_public_api = __commonJS({
       } else if (options === void 0 && reviver && typeof reviver === "object") {
         options = reviver;
       }
-      const doc = parseDocument(src, options);
+      const doc = parseDocument2(src, options);
       if (!doc)
         return null;
       doc.warnings.forEach((warning) => log.warn(doc.options.logLevel, warning));
@@ -7301,7 +7301,7 @@ var require_public_api = __commonJS({
     }
     exports.parse = parse3;
     exports.parseAllDocuments = parseAllDocuments;
-    exports.parseDocument = parseDocument;
+    exports.parseDocument = parseDocument2;
     exports.stringify = stringify;
   }
 });
@@ -7395,7 +7395,7 @@ function loadContract(root) {
 
 // src/manifest/model.ts
 var import_yaml = __toESM(require_dist(), 1);
-import { existsSync as existsSync2, readFileSync as readFileSync2 } from "node:fs";
+import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync } from "node:fs";
 import { join as join2 } from "node:path";
 function loadManifest(root) {
   const path = join2(root, ".sharding", "manifest.yaml");
@@ -7407,10 +7407,21 @@ function loadManifest(root) {
       dir: entry.dir,
       adapter: entry.adapter,
       provides: entry.provides ?? [],
-      consumes: entry.consumes ?? []
+      consumes: entry.consumes ?? [],
+      ...entry.verifiedAgainst ? { verifiedAgainst: String(entry.verifiedAgainst) } : {}
     };
   }
   return { contractVersion: raw.contractVersion, currentPhase: raw.currentPhase, shards };
+}
+function ackShardVersion(root, shardName, version) {
+  const path = join2(root, ".sharding", "manifest.yaml");
+  if (!existsSync2(path)) throw new Error(`no manifest at ${path}`);
+  const doc = (0, import_yaml.parseDocument)(readFileSync2(path, "utf8"));
+  if (doc.getIn(["shards", shardName]) === void 0) {
+    throw new Error(`unknown shard: ${shardName}`);
+  }
+  doc.setIn(["shards", shardName, "verifiedAgainst"], version);
+  writeFileSync(path, doc.toString());
 }
 function shardForDir(m, relDir) {
   const norm = relDir.replace(/\/+$/, "");
@@ -7644,7 +7655,15 @@ function checkShard(root, shardName) {
     const snapshot = JSON.parse(readFileSync5(snapPath, "utf8"));
     findings.push(...diffSurface(expected, snapshot));
   }
-  return { shard: shardName, clean: findings.length === 0, findings };
+  const verifiedAgainst = entry.verifiedAgainst ?? manifest.contractVersion;
+  return {
+    shard: shardName,
+    clean: findings.length === 0,
+    findings,
+    contractVersion: contract.version,
+    verifiedAgainst,
+    versionStale: verifiedAgainst !== contract.version
+  };
 }
 
 // src/check/status.ts
@@ -7656,7 +7675,8 @@ function status(root) {
     contractVersion: contract.version,
     currentPhase: manifest.currentPhase,
     shards,
-    blastRadius: shards.filter((s) => !s.clean).map((s) => s.shard)
+    blastRadius: shards.filter((s) => !s.clean).map((s) => s.shard),
+    staleShards: shards.filter((s) => s.versionStale).map((s) => s.shard)
   };
 }
 
@@ -7683,10 +7703,14 @@ function checkPhase(root, runAcceptance = defaultRunner) {
   const phase = loadPhases(root).find((p) => p.id === manifest.currentPhase);
   if (!phase) throw new Error(`no phase spec for ${manifest.currentPhase}`);
   const findings = [];
+  const staleShards = [];
   for (const shardName of phase.shards) {
-    findings.push(...checkShard(root, shardName).findings);
+    const result = checkShard(root, shardName);
+    findings.push(...result.findings);
+    if (result.versionStale) staleShards.push(shardName);
   }
   const shardsClean = findings.length === 0;
+  const versionsAcknowledged = staleShards.length === 0;
   let acceptancePassed = true;
   let acceptanceOutput = "";
   if (phase.acceptance) {
@@ -7697,8 +7721,10 @@ function checkPhase(root, runAcceptance = defaultRunner) {
   return {
     phase: phase.id,
     shardsClean,
+    versionsAcknowledged,
+    staleShards,
     acceptancePassed,
-    passed: shardsClean && acceptancePassed,
+    passed: shardsClean && versionsAcknowledged && acceptancePassed,
     findings,
     acceptanceOutput
   };
@@ -7739,6 +7765,27 @@ function run(argv, root) {
     case "status": {
       const report = status(root);
       return { code: report.blastRadius.length === 0 ? 0 : 1, stdout: j(report) };
+    }
+    case "ack": {
+      const shard = rest[0];
+      if (!loadManifest(root).shards[shard]) {
+        return { code: 1, stdout: j({ shard, acknowledged: false, reason: `unknown shard: ${shard}` }) };
+      }
+      const result = checkShard(root, shard);
+      if (!result.clean) {
+        return {
+          code: 1,
+          stdout: j({
+            shard,
+            acknowledged: false,
+            reason: "shard has drift; resolve it before acknowledging the contract version",
+            findings: result.findings
+          })
+        };
+      }
+      const version = loadContract(root).version;
+      ackShardVersion(root, shard, version);
+      return { code: 0, stdout: j({ shard, acknowledged: true, verifiedAgainst: version }) };
     }
     case "phase-check": {
       const result = checkPhase(root);

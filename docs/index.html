@@ -706,12 +706,78 @@ shards:
     the Stop hook will both catch it.
   </p>
 
+  <h3>the change a diff cannot see</h3>
+
+  <p>
+    Structural diffing has a blind spot, and it is worth naming rather than glossing.
+    Some breaking changes leave every declared shape identical: a narrowed enum, a
+    tightened validation rule, a redefined unit on an existing number, a reinterpreted
+    error code. Diff the surfaces and they match perfectly. Nothing is caught.
+  </p>
+
+  <p>
+    So the contract version is a second, independent channel. Every shard records the
+    version it was last verified against, and a bump marks it
+    <strong>stale</strong> until someone explicitly acknowledges it:
+  </p>
+
+  <pre class="cmd"><code><span class="l">node dist/cli.mjs check orders</span></code></pre>
+  <pre class="out"><code>{
+  "shard": "orders",
+  "clean": true,
+  "findings": [],
+  "contractVersion": "v2",
+  "verifiedAgainst": "v1",
+  "versionStale": true
+}</code></pre>
+  <p class="exit good">exit <b>0</b></p>
+
+  <p>
+    Note the exit code. Staleness is deliberately <em>not</em> drift: a bump should not
+    interrupt every shard mid-task, and the everyday check stays green. It blocks in
+    exactly one place, the phase gate, because a phase cannot claim to be provably
+    integrable while a participating shard was never checked against the version the
+    phase froze.
+  </p>
+
+  <pre class="cmd"><code><span class="l">node dist/cli.mjs phase-check</span></code></pre>
+  <pre class="out"><code>{
+  "phase": "phase-1",
+  "shardsClean": true,
+  "versionsAcknowledged": false,
+  "staleShards": [
+    "orders",
+    "gateway"
+  ],
+  "acceptancePassed": true,
+  "passed": false,
+  "findings": [],
+  "acceptanceOutput": ""
+}</code></pre>
+  <p class="exit bad">exit <b>1</b></p>
+
   <p class="muted">
-    Worth being precise about how this works: the blast radius is derived from
-    structural content diffs, not from comparing version strings. A shard is in the
-    radius because its declared surface no longer matches the contract's actual shape.
-    <code class="inl">VERSION</code> is the freeze marker that keeps the target from
-    moving under a working shard; it is not itself the detection mechanism.
+    Nothing drifted and the acceptance suite passes. The phase is still blocked, and
+    correctly so.
+  </p>
+
+  <p>
+    Clearing it is a deliberate act, not a side effect. A clean structural diff never
+    re-blesses a shard on its own, because that is precisely the case this channel
+    exists to catch. Someone reviews what actually changed, then stamps it:
+  </p>
+
+  <pre class="cmd"><code><span class="l">node dist/cli.mjs ack orders</span></code></pre>
+  <pre class="out"><code>{
+  "shard": "orders",
+  "acknowledged": true,
+  "verifiedAgainst": "v2"
+}</code></pre>
+  <p class="exit good">exit <b>0</b></p>
+
+  <p class="muted">
+    The command refuses outright if the shard has drift, so an acknowledgment can never
+    launder a real structural problem into a green stamp.
   </p>
 
   <p>
@@ -832,6 +898,9 @@ shards:
     <dt class="yes">blast radius is computed</dt>
     <dd>A contract change surfaces every affected shard and the exact field, rather than relying on anyone tracking it.</dd>
 
+    <dt class="yes">invisible changes still block</dt>
+    <dd>A version bump that leaves every shape identical marks each shard stale and holds the phase gate until it is explicitly acknowledged.</dd>
+
     <dt class="yes">the gate means something</dt>
     <dd>A phase goes green only when every diff is clean and the acceptance suite actually passes.</dd>
 
@@ -873,6 +942,7 @@ shards:
     <li><code class="inl">/shard-contract</code> - author or amend the contract, then freeze and bump. Conductor only.</li>
     <li><code class="inl">/shard-new &lt;name&gt;</code> - register a shard with its provides and consumes.</li>
     <li><code class="inl">/shard-check [name]</code> - diff a shard's surface against the contract.</li>
+    <li><code class="inl">/shard-ack [name]</code> - acknowledge a shard against the current contract version.</li>
     <li><code class="inl">/shard-phase-check</code> - the gate.</li>
     <li><code class="inl">/shard-status</code> - the graph, the phase, per-shard drift, blast radius.</li>
   </ul>

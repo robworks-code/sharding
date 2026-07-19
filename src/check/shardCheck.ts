@@ -9,8 +9,12 @@ import type { Finding, StructuralSurface } from "../surface/types";
 
 export interface ShardCheckResult {
   shard: string;
+  /** Structural conformance only. Staleness is deliberately not drift. */
   clean: boolean;
   findings: Finding[];
+  contractVersion: string;
+  verifiedAgainst: string;
+  versionStale: boolean;
 }
 
 export function checkShard(root: string, shardName: string): ShardCheckResult {
@@ -55,5 +59,17 @@ export function checkShard(root: string, shardName: string): ShardCheckResult {
     findings.push(...diffSurface(expected, snapshot));
   }
 
-  return { shard: shardName, clean: findings.length === 0, findings };
+  // A shard is measured against the version it last acknowledged. Without an
+  // explicit acknowledgment the manifest's contractVersion is the baseline,
+  // so a conductor bump goes stale for every shard that hasn't looked at it.
+  const verifiedAgainst = entry.verifiedAgainst ?? manifest.contractVersion;
+
+  return {
+    shard: shardName,
+    clean: findings.length === 0,
+    findings,
+    contractVersion: contract.version,
+    verifiedAgainst,
+    versionStale: verifiedAgainst !== contract.version,
+  };
 }

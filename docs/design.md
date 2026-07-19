@@ -178,11 +178,26 @@ check diffs against that version, so the target never moves under a working shar
 
 1. Only the conductor can (`PreToolUse` denies shard writes to `contract/`).
    `/shard-contract` amends and **bumps the version**.
-2. The bump **invalidates every consuming shard's check** - each shows a consume-side
-   finding ("built against v3, contract is v4"). The change is loud and propagates to
-   exactly the shards it touches.
-3. `/shard-status` shows the **blast radius**: which shards are now out of conformance.
-   No shard can quietly stay on the old shape - the next check and the Stop hook catch it.
+2. The bump propagates through **two independent channels**:
+   - **Structural**: any shard whose declared surface no longer matches the new contract
+     shape reports drift, with the precise field. This is the everyday case.
+   - **Version**: every shard is marked **stale** until it explicitly acknowledges the new
+     version. This catches changes that are semantically breaking but structurally
+     invisible - a narrowed enum, a tightened validation rule, a redefined unit - which a
+     shape diff cannot see by construction.
+3. `/shard-status` shows both: `blastRadius` (shards that actually drifted) and
+   `staleShards` (shards that have not acknowledged the current version).
+4. Staleness is **not** drift and deliberately does not fail `/shard-check` or block the
+   Stop hook - a bump should not interrupt every shard mid-task. It blocks at
+   `/shard-phase-check`, because a phase cannot be "provably integrable" while a
+   participating shard was never checked against the version the phase froze.
+5. Clearing it is deliberate: `/shard-ack <name>` stamps `verifiedAgainst` in the
+   manifest, and refuses outright if the shard has drift. A clean structural diff alone
+   never re-blesses a shard, since that is precisely the case the version channel exists
+   to catch.
+
+A shard with no `verifiedAgainst` recorded falls back to the manifest's top-level
+`contractVersion` as its baseline.
 
 **Lifecycle:**
 
@@ -193,6 +208,7 @@ shards work in isolation, each converging to vN via /shard-check + Stop-hook gat
    |
 /shard-phase-check  -> all provide-side diffs clean
                     +  all consume-side checks clean
+                    +  all participating shards acknowledged the frozen version
                     +  phase integration/acceptance suite green
    |  (only if all pass)
 close phase -> tag the integrable snapshot; contract vN becomes the baseline for phase N+1

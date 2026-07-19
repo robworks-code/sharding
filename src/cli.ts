@@ -1,7 +1,8 @@
 import { checkShard } from "./check/shardCheck";
 import { status } from "./check/status";
 import { checkPhase } from "./check/phaseCheck";
-import { loadManifest, shardForDir } from "./manifest/model";
+import { ackShardVersion, loadManifest, shardForDir } from "./manifest/model";
+import { loadContract } from "./contract/model";
 import { isReadAllowed, isWriteAllowed } from "./isolation/sandbox";
 
 function flags(argv: string[]): Record<string, string> {
@@ -27,6 +28,31 @@ export function run(argv: string[], root: string): { code: number; stdout: strin
     case "status": {
       const report = status(root);
       return { code: report.blastRadius.length === 0 ? 0 : 1, stdout: j(report) };
+    }
+    case "ack": {
+      const shard = rest[0];
+      // Report an unknown shard through the CLI's JSON contract rather than
+      // letting checkShard throw: /shard-ack parses this output.
+      if (!loadManifest(root).shards[shard]) {
+        return { code: 1, stdout: j({ shard, acknowledged: false, reason: `unknown shard: ${shard}` }) };
+      }
+      const result = checkShard(root, shard);
+      // Acknowledging a drifted shard would launder real drift into a green
+      // stamp, so the shard must conform before it can claim it looked.
+      if (!result.clean) {
+        return {
+          code: 1,
+          stdout: j({
+            shard,
+            acknowledged: false,
+            reason: "shard has drift; resolve it before acknowledging the contract version",
+            findings: result.findings,
+          }),
+        };
+      }
+      const version = loadContract(root).version;
+      ackShardVersion(root, shard, version);
+      return { code: 0, stdout: j({ shard, acknowledged: true, verifiedAgainst: version }) };
     }
     case "phase-check": {
       const result = checkPhase(root);

@@ -16,6 +16,9 @@ export interface PhaseSpec {
 export interface PhaseCheckResult {
   phase: string;
   shardsClean: boolean;
+  /** Every participating shard has acknowledged the frozen contract version. */
+  versionsAcknowledged: boolean;
+  staleShards: string[];
   acceptancePassed: boolean;
   passed: boolean;
   findings: Finding[];
@@ -46,10 +49,16 @@ export function checkPhase(
   if (!phase) throw new Error(`no phase spec for ${manifest.currentPhase}`);
 
   const findings: Finding[] = [];
+  const staleShards: string[] = [];
   for (const shardName of phase.shards) {
-    findings.push(...checkShard(root, shardName).findings);
+    const result = checkShard(root, shardName);
+    findings.push(...result.findings);
+    if (result.versionStale) staleShards.push(shardName);
   }
   const shardsClean = findings.length === 0;
+  // A phase cannot be "provably integrable" while a participating shard has
+  // never been checked against the version the phase froze.
+  const versionsAcknowledged = staleShards.length === 0;
 
   let acceptancePassed = true;
   let acceptanceOutput = "";
@@ -62,8 +71,10 @@ export function checkPhase(
   return {
     phase: phase.id,
     shardsClean,
+    versionsAcknowledged,
+    staleShards,
     acceptancePassed,
-    passed: shardsClean && acceptancePassed,
+    passed: shardsClean && versionsAcknowledged && acceptancePassed,
     findings,
     acceptanceOutput,
   };
