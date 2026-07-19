@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadContract } from "../contract/model";
 import { loadManifest } from "../manifest/model";
+import { readAck } from "../shard/ack";
 import { getAdapter } from "../adapters/index";
 import { diffSurface } from "../surface/diff";
 import { lintConventions, type ConventionRules } from "../conventions/lint";
@@ -59,10 +60,11 @@ export function checkShard(root: string, shardName: string): ShardCheckResult {
     findings.push(...diffSurface(expected, snapshot));
   }
 
-  // A shard is measured against the version it last acknowledged. Without an
-  // explicit acknowledgment the manifest's contractVersion is the baseline,
-  // so a conductor bump goes stale for every shard that hasn't looked at it.
-  const verifiedAgainst = entry.verifiedAgainst ?? manifest.contractVersion;
+  // A shard is measured against the version it last acknowledged, which it
+  // records in its own directory. Without an explicit acknowledgment the
+  // manifest's contractVersion is the baseline, so a conductor bump goes stale
+  // for every shard that hasn't looked at it.
+  const verifiedAgainst = readAck(shardDir) ?? manifest.contractVersion;
 
   return {
     shard: shardName,

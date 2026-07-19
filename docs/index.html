@@ -764,10 +764,11 @@ shards:
   <p>
     Clearing it is a deliberate act, not a side effect. A clean structural diff never
     re-blesses a shard on its own, because that is precisely the case this channel
-    exists to catch. Someone reviews what actually changed, then stamps it:
+    exists to catch. The shard reviews what actually changed, then records it - from
+    inside its own sandbox:
   </p>
 
-  <pre class="cmd"><code><span class="l">node dist/cli.mjs ack orders</span></code></pre>
+  <pre class="cmd"><code><span class="l">cd shards/orders &amp;&amp; node ../../dist/cli.mjs ack</span></code></pre>
   <pre class="out"><code>{
   "shard": "orders",
   "acknowledged": true,
@@ -776,8 +777,14 @@ shards:
   <p class="exit good">exit <b>0</b></p>
 
   <p class="muted">
-    The command refuses outright if the shard has drift, so an acknowledgment can never
-    launder a real structural problem into a green stamp.
+    The shard acknowledges itself, and only itself. The change this channel exists to
+    catch is one a shape diff cannot see, so judging it means reading that shard's
+    implementation - which the conductor deliberately does not hold. A conductor-side
+    stamp would be a blind one. The record lands in the shard's own
+    <code class="inl">surface/ACKNOWLEDGED</code>, so nothing outside the sandbox is
+    written. And the testimony is never taken as proof: the gate still measures every
+    shard for real drift independently, so an acknowledgment cannot launder a structural
+    problem into a green phase.
   </p>
 
   <p>
@@ -942,7 +949,7 @@ shards:
     <li><code class="inl">/shard-contract</code> - author or amend the contract, then freeze and bump. Conductor only.</li>
     <li><code class="inl">/shard-new &lt;name&gt;</code> - register a shard with its provides and consumes.</li>
     <li><code class="inl">/shard-check [name]</code> - diff a shard's surface against the contract.</li>
-    <li><code class="inl">/shard-ack [name]</code> - acknowledge a shard against the current contract version.</li>
+    <li><code class="inl">/shard-ack</code> - run inside a shard: acknowledge it against the current contract version.</li>
     <li><code class="inl">/shard-phase-check</code> - the gate.</li>
     <li><code class="inl">/shard-status</code> - the graph, the phase, per-shard drift, blast radius.</li>
   </ul>
