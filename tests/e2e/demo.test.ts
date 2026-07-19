@@ -44,6 +44,33 @@ describe("sharding e2e demo", () => {
     expect(report.blastRadius.sort()).toEqual(["gateway", "orders"]); // both were built against v1
   });
 
+  it("SC3b: a version bump with no shape change is caught, and only an explicit ack clears it", () => {
+    const root = freshDemo();
+    // A semantically breaking but structurally invisible change: the conductor
+    // freezes a new version without altering any declared shape.
+    writeFileSync(join(root, "contract", "VERSION"), "v2");
+
+    // Everyday check still passes - staleness is not drift - but says so.
+    const check = run(["check", "orders"], root);
+    expect(check.code).toBe(0);
+    expect(JSON.parse(check.stdout).versionStale).toBe(true);
+
+    // The gate refuses: no shard has been checked against v2.
+    const gated = run(["phase-check"], root);
+    expect(gated.code).toBe(1);
+    const gatedReport = JSON.parse(gated.stdout);
+    expect(gatedReport.passed).toBe(false);
+    expect(gatedReport.shardsClean).toBe(true); // nothing drifted
+    expect(gatedReport.staleShards.sort()).toEqual(["gateway", "orders"]);
+
+    // A clean diff alone must not re-bless the shards: acking is deliberate.
+    run(["ack", "orders"], root);
+    expect(JSON.parse(run(["phase-check"], root).stdout).staleShards).toEqual(["gateway"]);
+
+    run(["ack", "gateway"], root);
+    expect(JSON.parse(run(["phase-check"], root).stdout).passed).toBe(true);
+  });
+
   it("SC4: phase-check passes only when all shards conform", () => {
     const root = freshDemo();
     const clean = run(["phase-check"], root);

@@ -6,7 +6,10 @@ export interface StatusReport {
   contractVersion: string;
   currentPhase: string;
   shards: ShardCheckResult[];
+  /** Shards whose declared surface no longer matches the contract. */
   blastRadius: string[];
+  /** Shards that have not acknowledged the current contract version. */
+  staleShards: string[];
 }
 
 export function status(root: string): StatusReport {
@@ -18,5 +21,6 @@ export function status(root: string): StatusReport {
     currentPhase: manifest.currentPhase,
     shards,
     blastRadius: shards.filter((s) => !s.clean).map((s) => s.shard),
+    staleShards: shards.filter((s) => s.versionStale).map((s) => s.shard),
   };
 }

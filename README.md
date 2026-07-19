@@ -41,7 +41,7 @@ Three mechanisms enforce the boundaries:
 
 - **Validate-and-diff** (everyday): extract a shard's declared surface, diff it against its contract slice, and report drift precisely - on both the provide side and the consume side.
 - **Phase gate** (at boundaries): run the drift check across every participating shard plus the phase's acceptance criteria before a phase can advance.
-- **Isolation** (always): a session opened inside `shards/<name>/` may read only that directory and the read-only `contract/`, and may never write the contract. Drift and change are the same mechanical event from opposite sides - a shard diverging is drift (illegal); the conductor bumping `contract/VERSION` is change (legal, versioned), and the bump loudly invalidates every consuming shard's check.
+- **Isolation** (always): a session opened inside `shards/<name>/` may read only that directory and the read-only `contract/`, and may never write the contract. Drift and change are the same mechanical event from opposite sides - a shard diverging is drift (illegal); the conductor bumping `contract/VERSION` is change (legal, versioned). A bump propagates two ways: structurally, as drift findings for any shard whose shape no longer matches, and by version, marking every shard stale until it explicitly acknowledges the new contract. The second channel catches changes a shape diff cannot see - a narrowed enum, a tightened rule - and blocks the phase gate rather than interrupting shards mid-task.
 
 ## Layout of this repo
 
@@ -53,7 +53,7 @@ Three mechanisms enforce the boundaries:
   - `cli.ts` - a pure, testable dispatch over every engine operation
 - `hooks/`, `commands/`, `skills/`, `.claude-plugin/` - the Claude Code plugin surface (SessionStart / PreToolUse / Stop hooks, the `/shard-*` commands, and the sharding skill)
 - `examples/demo/` - a two-shard demo (`orders` provides an Order API; `gateway` consumes it) whose end-to-end test drives the real engine
-- `tests/` - the test suite (49 tests across 16 files)
+- `tests/` - the test suite (66 tests across 17 files)
 - `docs/design.md` - the design spec: premise, scope decisions, and the mechanism in full
 
 ## The plugin commands
@@ -66,6 +66,7 @@ Used from inside Claude Code once the plugin is installed. When installed as a p
 | `/shard-contract` | root | Author or amend the contract, then freeze: bump `VERSION` and snapshot for the phase. Conductor-only. |
 | `/shard-new <name>` | root | Registers a shard: creates `shards/<name>/` and adds it to the manifest with its provides/consumes slices. |
 | `/shard-check [name]` | anywhere | Extract the shard's surface, diff against its contract slice, report drift. |
+| `/shard-ack [name]` | anywhere | Acknowledge the shard against the current contract version, after reviewing what the bump changed. |
 | `/shard-phase-check` | root | The gate: run `/shard-check` across all participating shards plus the phase's acceptance suite. |
 | `/shard-status` | anywhere | Print the graph: shards, phase, per-shard drift, contract version, blast radius of a change. |
 
@@ -77,7 +78,8 @@ The same operations are available as a plain CLI, so the workflow also works in 
 npm install
 
 npm run cli -- check <shard>      # diff one shard's surface against the contract
-npm run cli -- status             # graph + per-shard state + blast radius
+npm run cli -- ack <shard>        # acknowledge the shard against the current contract version
+npm run cli -- status             # graph + per-shard state + blast radius + stale shards
 npm run cli -- phase-check        # the phase gate
 npm run cli -- orient --dir <d>   # is this dir a shard or the conductor?
 ```
