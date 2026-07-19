@@ -121,6 +121,18 @@ This repo also doubles as a single-plugin marketplace (`.claude-plugin/marketpla
 /plugin install sharding@sharding-local
 ```
 
+## License
+
+Source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE), not open source.
+
+The source is public so you can read it, learn from it, fork it, and modify it. Any
+noncommercial purpose is permitted - personal projects, study, research, and use by
+charitable, educational, and government organizations. Commercial use is not covered by
+this license; if you want it, get in touch about a commercial license.
+
+The prebuilt CLI at `dist/cli.mjs` bundles [yaml](https://github.com/eemeli/yaml) (ISC).
+See [NOTICE](NOTICE).
+
 ## Status
 
 Proof of concept. The plugin and engine prove the mechanism end-to-end via the two-shard demo. The eventual next step - a standalone orchestrator that actively drives the shard sessions - is intentionally out of scope here.
