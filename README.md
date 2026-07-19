@@ -4,6 +4,8 @@ Build a large software product as a set of deliberately separated components ("s
 
 This repository is the proof-of-concept: a Claude Code plugin plus the deterministic engine underneath it.
 
+**[robworks-code.github.io/sharding](https://robworks-code.github.io/sharding/)** walks through the whole idea top to bottom: the failure mode it addresses, the mechanism, and the two-shard demo with real output.
+
 ## The idea
 
 The premise is that **LLM inconsistency is a given, not something to hope away**. The system never asks a session to "remember" the whole product. Instead it makes the shared truth external, small, and mechanically enforced:
