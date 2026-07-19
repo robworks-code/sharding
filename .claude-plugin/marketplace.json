@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Single-plugin marketplace for installing and testing the sharding plugin directly from this repo.",
-    "version": "0.0.2"
+    "version": "0.0.3"
   },
   "plugins": [
     {

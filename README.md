@@ -135,7 +135,8 @@ individual use versus organizational adoption: standardizing on it across a team
 deploying it as shared infrastructure, or running it in automated systems on the
 organization's behalf. As a concrete safe harbor, up to five individuals within one
 organization, each acting on their own initiative, are covered by the grant - so a team
-can pilot it before anyone has to ask anyone for permission.
+can pilot it before anyone has to ask anyone for permission. For a commercial license,
+contact <licensing@robworks.info>.
 
 **It becomes MIT on 2030-07-19.** BUSL converts each version to the Change License on its
 Change Date, so this is a delay on open source, not a refusal of it.
