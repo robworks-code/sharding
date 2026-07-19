@@ -121,6 +121,28 @@ This repo also doubles as a single-plugin marketplace (`.claude-plugin/marketpla
 /plugin install sharding@sharding-local
 ```
 
+## License
+
+Source-available under the [Business Source License 1.1](LICENSE), not open source (yet).
+
+**If you are a developer, use it.** The Additional Use Grant covers production use by any
+individual acting on their own initiative - including work for an employer or client of
+any size, and work you get paid for. Your employer's headcount does not matter. Read it,
+fork it, modify it, use it on real work.
+
+**If your organization adopts it, that needs a commercial license.** The line is
+individual use versus organizational adoption: standardizing on it across a team,
+deploying it as shared infrastructure, or running it in automated systems on the
+organization's behalf. As a concrete safe harbor, up to five individuals within one
+organization, each acting on their own initiative, are covered by the grant - so a team
+can pilot it before anyone has to ask anyone for permission.
+
+**It becomes MIT on 2030-07-19.** BUSL converts each version to the Change License on its
+Change Date, so this is a delay on open source, not a refusal of it.
+
+The prebuilt CLI at `dist/cli.mjs` bundles [yaml](https://github.com/eemeli/yaml) (ISC).
+See [NOTICE](NOTICE).
+
 ## Status
 
 Proof of concept. The plugin and engine prove the mechanism end-to-end via the two-shard demo. The eventual next step - a standalone orchestrator that actively drives the shard sessions - is intentionally out of scope here.

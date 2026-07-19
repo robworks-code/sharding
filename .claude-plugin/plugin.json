@@ -5,7 +5,7 @@
   "author": {
     "name": "Ryan Robson and Robworks Software LLC"
   },
-  "license": "MIT",
+  "license": "BUSL-1.1",
   "homepage": "https://github.com/Robworks-Code/sharding",
   "repository": "https://github.com/Robworks-Code/sharding",
   "keywords": ["sharding", "contract-first", "isolation", "spec-driven", "monorepo"]
