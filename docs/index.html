@@ -111,12 +111,30 @@ h1::before {
 .herolinks {
   font-family: var(--mono);
   font-size: .95rem;
-  color: var(--muted);
   display: flex;
   flex-wrap: wrap;
-  gap: 1.25rem;
-  margin-top: 1.75rem;
+  gap: .6rem;
+  margin-top: 2rem;
 }
+.herolinks a {
+  display: inline-block;
+  border: 1px solid var(--muted);
+  background: var(--panel);
+  color: var(--fg);
+  text-decoration: none;
+  padding: .45rem .9rem;
+  line-height: 1.35;
+}
+.herolinks a::before {
+  content: "> ";
+  color: var(--accent);
+}
+.herolinks a:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.herolinks a:hover::before { color: var(--accent); }
+
 /* long URLs must break rather than clip: body is overflow-x:hidden */
 .herolinks a, footer a { overflow-wrap: anywhere; }
 
@@ -365,9 +383,10 @@ footer {
     The point is not that the model gets smarter. The point is that it no longer has to be.
   </p>
   <div class="herolinks">
-    <a href="https://github.com/robworks-code/sharding">github.com/robworks-code/sharding</a>
+    <a href="https://github.com/robworks-code/sharding">source</a>
     <a href="#install">install</a>
     <a href="https://github.com/robworks-code/sharding/blob/main/docs/design.md">design spec</a>
+    <a href="#demo">the demo</a>
   </div>
 </header>
 
