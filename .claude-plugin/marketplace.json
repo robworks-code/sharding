@@ -15,7 +15,7 @@
       "description": "Develop a product as isolated shards coupled only through a frozen, versioned contract, with drift caught mechanically.",
       "homepage": "https://github.com/Robworks-Code/sharding",
       "repository": "https://github.com/Robworks-Code/sharding",
-      "license": "PolyForm-Noncommercial-1.0.0",
+      "license": "BUSL-1.1",
       "author": {
         "name": "Ryan Robson and Robworks Software LLC"
       },

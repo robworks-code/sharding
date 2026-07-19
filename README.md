@@ -123,12 +123,22 @@ This repo also doubles as a single-plugin marketplace (`.claude-plugin/marketpla
 
 ## License
 
-Source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE), not open source.
+Source-available under the [Business Source License 1.1](LICENSE), not open source (yet).
 
-The source is public so you can read it, learn from it, fork it, and modify it. Any
-noncommercial purpose is permitted - personal projects, study, research, and use by
-charitable, educational, and government organizations. Commercial use is not covered by
-this license; if you want it, get in touch about a commercial license.
+**If you are a developer, use it.** The Additional Use Grant covers production use by any
+individual acting on their own initiative - including work for an employer or client of
+any size, and work you get paid for. Your employer's headcount does not matter. Read it,
+fork it, modify it, use it on real work.
+
+**If your organization adopts it, that needs a commercial license.** The line is
+individual use versus organizational adoption: standardizing on it across a team,
+deploying it as shared infrastructure, or running it in automated systems on the
+organization's behalf. As a concrete safe harbor, up to five individuals within one
+organization, each acting on their own initiative, are covered by the grant - so a team
+can pilot it before anyone has to ask anyone for permission.
+
+**It becomes MIT on 2030-07-19.** BUSL converts each version to the Change License on its
+Change Date, so this is a delay on open source, not a refusal of it.
 
 The prebuilt CLI at `dist/cli.mjs` bundles [yaml](https://github.com/eemeli/yaml) (ISC).
 See [NOTICE](NOTICE).
