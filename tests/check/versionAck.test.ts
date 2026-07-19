@@ -172,6 +172,14 @@ describe("cli ack: acknowledgment is explicit", () => {
     expect(checkPhase(root, () => ({ ok: true, output: "ok" })).passed).toBe(true);
   });
 
+  it("reports an unknown shard through the JSON contract instead of throwing", () => {
+    const root = scaffold();
+    const { code, stdout } = run(["ack", "no-such-shard"], root);
+    expect(code).toBe(1);
+    expect(JSON.parse(stdout).acknowledged).toBe(false);
+    expect(JSON.parse(stdout).reason).toMatch(/unknown shard/);
+  });
+
   it("refuses to acknowledge a shard that has drifted", () => {
     const root = scaffold();
     bumpVersionOnly(root, "v2");

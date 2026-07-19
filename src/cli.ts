@@ -31,6 +31,11 @@ export function run(argv: string[], root: string): { code: number; stdout: strin
     }
     case "ack": {
       const shard = rest[0];
+      // Report an unknown shard through the CLI's JSON contract rather than
+      // letting checkShard throw: /shard-ack parses this output.
+      if (!loadManifest(root).shards[shard]) {
+        return { code: 1, stdout: j({ shard, acknowledged: false, reason: `unknown shard: ${shard}` }) };
+      }
       const result = checkShard(root, shard);
       // Acknowledging a drifted shard would launder real drift into a green
       // stamp, so the shard must conform before it can claim it looked.

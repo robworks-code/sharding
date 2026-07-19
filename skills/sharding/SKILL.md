@@ -15,8 +15,9 @@ A sharded project develops one product as isolated **shards** that couple ONLY t
 
 ## If you are the conductor (repo root)
 - Change the contract only via `/shard-contract`, which bumps `contract/VERSION`. That bump is what distinguishes a legitimate change from drift.
-- `/shard-status` shows the computed blast radius after any change.
-- `/shard-phase-check` gates a phase: every participating shard clean AND the acceptance suite green. Only then close the phase and tag the snapshot.
+- `/shard-status` shows the computed blast radius after any change, plus any shards still stale against the current contract version.
+- A version bump marks every shard stale until it acknowledges the new contract. Staleness is not drift: `/shard-check` stays green and the Stop hook still lets a shard finish, but the phase gate blocks. Clear it with `/shard-ack <name>` after reviewing what actually changed - a clean structural diff alone never re-blesses a shard, which is the point for changes a shape diff cannot see.
+- `/shard-phase-check` gates a phase: every participating shard clean AND acknowledged against the frozen contract version AND the acceptance suite green. Only then close the phase and tag the snapshot.
 
 ## The one rule
 Never make a shard depend on another shard's internals. All cross-shard coupling goes through `contract/`, and every divergence is caught mechanically at a gate.

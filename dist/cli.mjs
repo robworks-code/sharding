@@ -7768,6 +7768,9 @@ function run(argv, root) {
     }
     case "ack": {
       const shard = rest[0];
+      if (!loadManifest(root).shards[shard]) {
+        return { code: 1, stdout: j({ shard, acknowledged: false, reason: `unknown shard: ${shard}` }) };
+      }
       const result = checkShard(root, shard);
       if (!result.clean) {
         return {
