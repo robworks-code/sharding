@@ -56,7 +56,7 @@ Three mechanisms enforce the boundaries:
   - `cli.ts` - a pure, testable dispatch over every engine operation
 - `hooks/`, `commands/`, `skills/`, `.claude-plugin/` - the Claude Code plugin surface (SessionStart / PreToolUse / Stop hooks, the `/shard-*` commands, and the sharding skill)
 - `examples/demo/` - a two-shard demo (`orders` provides an Order API; `gateway` consumes it) whose end-to-end test drives the real engine
-- `tests/` - the test suite (75 tests across 17 files)
+- `tests/` - the test suite (87 tests across 18 files)
 - `docs/design.md` - the design spec: premise, scope decisions, and the mechanism in full
 
 ## The plugin commands
@@ -70,7 +70,7 @@ Used from inside Claude Code once the plugin is installed. When installed as a p
 | `/shard-new <name>` | root | Registers a shard: creates `shards/<name>/` and adds it to the manifest with its provides/consumes slices. |
 | `/shard-check [name]` | anywhere | Extract the shard's surface, diff against its contract slice, report drift. |
 | `/shard-ack` | shard | Acknowledge this shard against the current contract version, after reviewing what the bump changed. Records into the shard's own directory. |
-| `/shard-phase-check` | root | The gate: run `/shard-check` across all participating shards plus the phase's acceptance suite. |
+| `/shard-phase-check` | anywhere | The gate: run `/shard-check` across all participating shards plus the phase's acceptance suite. |
 | `/shard-status` | anywhere | Print the graph: shards, phase, per-shard drift, contract version, blast radius of a change. |
 
 ## The engine directly (no plugin)
@@ -80,15 +80,19 @@ The same operations are available as a plain CLI, so the workflow also works in 
 ```bash
 npm install
 
-npm run cli -- check <shard>      # diff one shard's surface against the contract
+npm run cli -- check [shard]      # diff one shard's surface against the contract
 npm run cli -- status             # graph + per-shard state + blast radius + stale shards
 npm run cli -- phase-check        # the phase gate
 npm run cli -- orient --dir <d>   # is this dir a shard or the conductor?
 ```
 
-`ack` is the exception: it takes no argument and derives the shard from the working
-directory, and `npm run` resets the working directory to the package root. Invoke it
-directly, from inside the shard:
+Every command finds the workspace from the working directory, so they run from the
+conductor root, from inside a shard, or from any directory under either. `check` with
+no shard name checks the shard you are inside.
+
+`ack` is the exception to the `npm run` form: it derives the shard from the working
+directory, and `npm run` resets that to the package root. Invoke it directly, from
+inside the shard:
 
 ```bash
 cd shards/<name> && node /path/to/sharding/dist/cli.mjs ack

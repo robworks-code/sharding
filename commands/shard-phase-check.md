@@ -2,7 +2,7 @@
 description: Gate the current phase - all participating shards must be clean, acknowledged, and the acceptance suite must pass.
 ---
 
-This is the phase gate. From the repo root, run: `node ${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs phase-check`
+This is the phase gate. Run: `node ${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs phase-check` - from anywhere in the workspace; it finds the conductor root itself.
 
 Report `shardsClean`, `versionsAcknowledged`, `acceptancePassed`, and overall `passed`. If `passed` is false:
 
