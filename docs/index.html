@@ -600,7 +600,8 @@ shards:
         <code class="inl">/shard-phase-check</code> runs the drift check across every
         participating shard, then runs the phase's acceptance criteria. A phase closes
         only when all provide-side diffs are clean, all consume-side checks are clean,
-        and the acceptance suite is green.
+        every participating shard has acknowledged the frozen contract version, and the
+        acceptance suite is green.
       </p>
       <p class="muted">
         This is the deterministic definition of "done and it snaps together." Nothing
@@ -651,7 +652,10 @@ shards:
       "location": "placeOrder.response.orderId",
       "actual": "string"
     }
-  ]
+  ],
+  "contractVersion": "v1",
+  "verifiedAgainst": "v1",
+  "versionStale": false
 }</code></pre>
   <p class="exit bad">exit <b>1</b></p>
 
@@ -680,20 +684,38 @@ shards:
       "shard": "orders",
       "clean": false,
       "findings": [
-        { "slice": "Order", "kind": "missing-field",
-          "location": "Order.currency", "expected": "string" }
-      ]
+        {
+          "slice": "Order",
+          "kind": "missing-field",
+          "location": "Order.currency",
+          "expected": "string"
+        }
+      ],
+      "contractVersion": "v2",
+      "verifiedAgainst": "v1",
+      "versionStale": true
     },
     {
       "shard": "gateway",
       "clean": false,
       "findings": [
-        { "slice": "Order", "kind": "missing-field",
-          "location": "Order.currency", "expected": "string" }
-      ]
+        {
+          "slice": "Order",
+          "kind": "missing-field",
+          "location": "Order.currency",
+          "expected": "string"
+        }
+      ],
+      "contractVersion": "v2",
+      "verifiedAgainst": "v1",
+      "versionStale": true
     }
   ],
   "blastRadius": [
+    "orders",
+    "gateway"
+  ],
+  "staleShards": [
     "orders",
     "gateway"
   ]
@@ -863,6 +885,8 @@ shards:
       <pre class="out"><code>{
   "phase": "phase-1",
   "shardsClean": true,
+  "versionsAcknowledged": true,
+  "staleShards": [],
   "acceptancePassed": true,
   "passed": true,
   "findings": [],
