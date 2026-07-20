@@ -15,9 +15,9 @@ structurally invisible change still holds. The record is written into this
 shard's own `surface/ACKNOWLEDGED`, so acknowledging never touches conductor
 state.
 
-Everything this command needs is inside the sandbox. Do not run `/shard-check`
-or the `check` subcommand here - those read the conductor's manifest relative to
-the working directory and will fail from inside a shard.
+Everything this command needs is inside the sandbox. `/shard-check` also works
+from here if you want to confirm the shard is structurally clean first - it
+finds the workspace from wherever you are, and reads without writing.
 
 1. Confirm the current directory is inside `shards/<name>/`. If it is not, stop: the conductor does not acknowledge on a shard's behalf.
 2. Read `contract/VERSION` (the version now frozen) and this shard's `surface/ACKNOWLEDGED` (the version it last reviewed; absent means it has never acknowledged one).

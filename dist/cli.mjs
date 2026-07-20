@@ -7756,6 +7756,21 @@ function isWriteAllowed(shardDir, contractDir, target) {
   return isInside(shardDir, target) && !isInside(contractDir, target);
 }
 
+// src/workspace/root.ts
+import { existsSync as existsSync8 } from "node:fs";
+import { dirname, join as join8, resolve as resolve3 } from "node:path";
+function resolveRoot(cwd) {
+  const loc = locateShard(cwd);
+  if (loc) return loc.repoRoot;
+  let dir = resolve3(cwd);
+  for (; ; ) {
+    if (existsSync8(join8(dir, ".sharding", "manifest.yaml"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return resolve3(cwd);
+    dir = parent;
+  }
+}
+
 // src/cli.ts
 function flags(argv) {
   const out = {};
@@ -7767,12 +7782,23 @@ function flags(argv) {
   }
   return out;
 }
-function run(argv, root) {
+function run(argv, cwd) {
   const [cmd, ...rest] = argv;
   const j = (v) => JSON.stringify(v, null, 2);
+  const root = resolveRoot(cwd);
   switch (cmd) {
     case "check": {
-      const result = checkShard(root, rest[0]);
+      const shard = rest[0] ?? locateShard(cwd)?.shard;
+      if (!shard) {
+        return {
+          code: 1,
+          stdout: j({
+            checked: false,
+            reason: "no shard named and not inside one: pass a shard name, or run from inside a shard"
+          })
+        };
+      }
+      const result = checkShard(root, shard);
       return { code: result.clean ? 0 : 1, stdout: j(result) };
     }
     case "status": {
@@ -7780,7 +7806,7 @@ function run(argv, root) {
       return { code: report.blastRadius.length === 0 ? 0 : 1, stdout: j(report) };
     }
     case "ack": {
-      const loc = locateShard(root);
+      const loc = locateShard(cwd);
       if (!loc) {
         return {
           code: 1,

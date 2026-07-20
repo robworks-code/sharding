@@ -5,6 +5,7 @@ import { loadManifest, shardForDir } from "./manifest/model";
 import { loadContract } from "./contract/model";
 import { locateShard, writeAck } from "./shard/ack";
 import { isReadAllowed, isWriteAllowed } from "./isolation/sandbox";
+import { resolveRoot } from "./workspace/root";
 
 function flags(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -17,13 +18,31 @@ function flags(argv: string[]): Record<string, string> {
   return out;
 }
 
-export function run(argv: string[], root: string): { code: number; stdout: string } {
+/**
+ * `cwd` is where the session actually is; conductor state is read from the
+ * workspace that contains it. Commands are therefore position-independent - a
+ * shard session can run a read-only check on itself without leaving its
+ * directory, which is the only place it is allowed to be.
+ */
+export function run(argv: string[], cwd: string): { code: number; stdout: string } {
   const [cmd, ...rest] = argv;
   const j = (v: unknown) => JSON.stringify(v, null, 2);
+  const root = resolveRoot(cwd);
 
   switch (cmd) {
     case "check": {
-      const result = checkShard(root, rest[0]);
+      // No argument means "this shard", derived from where the session is.
+      const shard = rest[0] ?? locateShard(cwd)?.shard;
+      if (!shard) {
+        return {
+          code: 1,
+          stdout: j({
+            checked: false,
+            reason: "no shard named and not inside one: pass a shard name, or run from inside a shard",
+          }),
+        };
+      }
+      const result = checkShard(root, shard);
       return { code: result.clean ? 0 : 1, stdout: j(result) };
     }
     case "status": {
@@ -36,7 +55,7 @@ export function run(argv: string[], root: string): { code: number; stdout: strin
       // written into that shard's directory. Nothing conductor-owned is
       // touched; the phase gate still measures the shard for real drift, so a
       // shard cannot launder drift by claiming it looked.
-      const loc = locateShard(root);
+      const loc = locateShard(cwd);
       if (!loc) {
         return {
           code: 1,

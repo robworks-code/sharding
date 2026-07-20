@@ -103,8 +103,14 @@ from it is caught mechanically.**
 | `/shard-new <name>` | root | Registers a shard: creates `shards/<name>/` with `SHARD.md` + sandbox `CLAUDE.md` + empty `surface/`; adds it to the manifest with its provides/consumes slices and adapter. |
 | `/shard-check [name]` | anywhere | Mechanism **B**: extract/read the shard's declared surface, diff against its contract slice, report drift precisely. Checks both provide-side and consume-side. |
 | `/shard-ack` | shard | Acknowledge this shard against the current contract version after reviewing what the bump changed. Records into the shard's own `surface/ACKNOWLEDGED`; clears the staleness that blocks the phase gate. |
-| `/shard-phase-check` | root | The gate (**C/D**): run `/shard-check` across all participating shards + the phase's integration/acceptance suite from `phases.yaml`. |
+| `/shard-phase-check` | anywhere | The gate (**C/D**): run `/shard-check` across all participating shards + the phase's integration/acceptance suite from `phases.yaml`. |
 | `/shard-status` | anywhere | Prints the graph: shards, current phase, per-shard drift/clean state, contract version, blast radius after a change. |
+
+"Where" is workflow guidance, not a mechanism: the engine locates the workspace from
+the working directory, so the read-only commands run from any directory under it. The
+shard boundary takes precedence over the ancestor search, so a shard holding its own
+`.sharding/` cannot redefine which graph it is measured against. Writes stay governed
+by the isolation hook, which is what actually keeps a shard inside its sandbox.
 
 **Skill** - `sharding`: teaches any session the workflow and conventions (how to author
 a contract, declare a surface, work inside a shard). Lets a fresh disposable session
