@@ -113,6 +113,7 @@ Used from inside Claude Code once the plugin is installed. When installed as a p
 | `/shard-ack` | shard | Acknowledge this shard against the current contract version, after reviewing what the bump changed. Records into the shard's own directory. |
 | `/shard-phase-check` | anywhere | The gate: run `/shard-check` across all participating shards plus the phase's acceptance suite. |
 | `/shard-status` | anywhere | Print the graph: shards, phase, per-shard drift, contract version, blast radius of a change. |
+| `/feedback` | anywhere | Send a bug, idea, or drift-check correction to the maintainer's support queue as a ticket, without leaving the session. Shows the exact payload and confirms before sending. |
 
 ## The engine directly (no plugin)
 
