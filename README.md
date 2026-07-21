@@ -20,7 +20,7 @@ The premise is that **LLM inconsistency is a given, not something to hope away**
 ### Install the plugin
 
 ```
-/plugin marketplace add ringo380/robworks-claude-code-plugins
+/plugin marketplace add robworks-code/robworks-claude-code-plugins
 /plugin install sharding@robworks-claude-code-plugins
 ```
 
@@ -161,7 +161,7 @@ The plugin's hooks and commands invoke `node ${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs`
 From the robworks marketplace:
 
 ```
-/plugin marketplace add ringo380/robworks-claude-code-plugins
+/plugin marketplace add robworks-code/robworks-claude-code-plugins
 /plugin install sharding@robworks-claude-code-plugins
 ```
 
