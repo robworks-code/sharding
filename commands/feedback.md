@@ -1,5 +1,5 @@
 ---
-description: Send feedback about the sharding plugin (a bug, an idea, or a drift-check that went wrong) straight to the maintainer's support queue as a ticket. Attaches lightweight context - plugin version, OS, and a short summary of what sharding did this session. Confirms before sending.
+description: Send feedback about the sharding plugin (a bug, an idea, or a drift-check that went wrong) straight to the maintainer's support queue as a ticket. Offers to attach your email and extra context - and shows exactly what it collects. Confirms before sending.
 argument-hint: "[your feedback]"
 allowed-tools: ["Read", "Write", "Bash", "AskUserQuestion"]
 disable-model-invocation: true
@@ -34,9 +34,26 @@ Then derive:
   (a defect -> `bug`, a suggestion -> `feature`, a "how do I" -> `question`, else `other`).
 - **subject** - a short (<= 80 char) handle summarizing the body. Default to the first line.
 
-## Step 2 - Assemble lightweight context
+## Step 2 - Offer to personalize, with nothing hidden
 
-Collect only these, nothing more (no contract contents, no shard code, no file paths, no secrets):
+Before sending, tell the user **plainly and up front** what will be attached automatically:
+
+> This will include your plugin version, your OS string, and a UTC timestamp - nothing
+> else. No file paths, no code, no contract or shard contents, no conversation.
+
+Then ask **one** `AskUserQuestion` (multi-select, both optional - the default is an
+anonymous ticket with none of these):
+
+- **Add my email** - so the maintainer can reply, and you get a link to track this ticket.
+  If chosen, ask for the address and use exactly what they give you. If they decline, the
+  ticket is anonymous: no reply is possible and there is no page they can view.
+- **Add more context** - one sentence on what you were doing (e.g. "ran shard-check on 2
+  shards; 1 drift finding on gateway's consumed slice"). If chosen, capture a single line
+  as `session_summary`. Never paste contract, surface, or conversation content.
+
+If the user gave neither, proceed anonymously - that is a perfectly normal path.
+
+## Step 3 - Assemble the context fields
 
 ```bash
 # plugin version
@@ -47,15 +64,10 @@ uname -sr
 date -u +%Y-%m-%dT%H:%M:%SZ
 ```
 
-- **session_summary** - one short line on what sharding did this session if relevant
-  (e.g. "ran shard-check on 2 shards; 1 drift finding on gateway's consumed slice"), else
-  omit. Keep it to a sentence; never paste contract, surface, or conversation content.
+Include `session_summary` only if Step 2 collected one. Omit `context` keys you have no
+value for rather than sending empty strings.
 
-Email is **optional and off by default** - the ticket is anonymous. Only include an
-`email` field if the user explicitly asks to be reachable for a reply, using the address
-they give you.
-
-## Step 3 - Write the request body (correct escaping is your job)
+## Step 4 - Write the request body (correct escaping is your job)
 
 Use the **Write** tool to create the JSON body at
 `<scratchpad>/sharding-feedback.json` (use the session scratchpad dir). Building it with
@@ -70,18 +82,17 @@ user's text is escaped correctly. Shape:
   "subject": "<subject>",
   "body": "<the full feedback text>",
   "context": {
-    "plugin_version": "0.0.5",
+    "plugin_version": "0.0.7",
     "os": "Darwin 25.5.0",
     "submitted_at": "2026-07-21T18:30:00Z",
-    "session_summary": "<optional>"
+    "session_summary": "<only if the user added one>"
   }
 }
 ```
 
-Include `email` as a top-level string only if Step 2 decided to. Omit `context` keys you
-have no value for rather than sending empty strings.
+Include `email` as a top-level string only if the user chose to add one in Step 2.
 
-## Step 4 - Confirm, then send
+## Step 5 - Confirm, then send
 
 Print the exact payload (as a fenced `json` block) so the user sees precisely what will
 leave the machine. Then ask one `AskUserQuestion` single-select: `Send` / `Edit first` /
@@ -98,10 +109,15 @@ curl -sS -X POST "https://support.robworks.info/api/feedback" \
   -w '\nHTTP %{http_code}\n'
 ```
 
-## Step 5 - Report the result
+## Step 6 - Report the result
 
-- **201 / `ok:true`** - print a one-line success with the returned `ticket.url` (the
-  maintainer's view). Then delete the temp body file.
+- **201 / `ok:true` with a non-null `ticket.url`** (the user added an email) - thank them,
+  and share the link: they can track the ticket at that URL by signing in with the email
+  they gave. Then delete the temp body file.
+- **201 / `ok:true` with `ticket.url: null`** (anonymous) - thank them warmly and plainly:
+  the feedback was submitted and it is appreciated. Do **not** print a link and do **not**
+  imply they can view or track it - an anonymous ticket has no page they can reach. Then
+  delete the temp body file.
 - **429 `rate_limited`** - tell the user to try again shortly (respect `Retry-After`).
 - **4xx / network failure / no response** - the submission did NOT land. Print the endpoint
   URL and the full payload back to the user so nothing is lost and they can retry or send it
