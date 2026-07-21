@@ -15,6 +15,47 @@ The premise is that **LLM inconsistency is a given, not something to hope away**
 
 > The thesis under test: N independently-driven, isolated shards, coupled only through a frozen contract and gated mechanically, will snap together into an integrable deliverable at each phase - despite each session being individually forgetful.
 
+## Quick start
+
+### Install the plugin
+
+```
+/plugin marketplace add ringo380/robworks-claude-code-plugins
+/plugin install sharding@robworks-claude-code-plugins
+```
+
+Reload plugins (or restart the session) and the `/shard-*` commands are available. (Full install options, including from a local clone, are [below](#installing).)
+
+### See it work first - no setup
+
+The two-shard demo drives the real engine end to end: `orders` provides an Order API, `gateway` consumes it.
+
+```bash
+git clone https://github.com/robworks-code/sharding
+cd sharding && npm install
+npm test                                        # the demo's end-to-end test runs as part of the suite
+cd examples/demo && node ../../dist/cli.mjs status   # inspect the demo's shard graph directly
+```
+
+`status` prints the graph - both shards, the current phase, per-shard drift, and the contract version - all clean.
+
+### Use it on your own project
+
+Open Claude Code in the directory you want to orchestrate. As the conductor:
+
+1. **`/shard-init`** - scaffold the conductor workspace and pick your stack's surface adapter. One time.
+2. **`/shard-contract`** - author the shared interfaces, schemas, and conventions, then freeze them (bumps `contract/VERSION`).
+3. **`/shard-new <name>`** - register each shard with the slices it provides and consumes.
+
+Then build each shard in its **own isolated session**: open Claude Code inside `shards/<name>/`, where it can see only that directory plus the read-only `contract/`, and develop against the contract. At any point:
+
+- **`/shard-check`** - diff this shard's surface against the contract and report drift.
+- **`/shard-ack`** - acknowledge the current contract version after a bump, once you have reviewed what changed.
+- **`/shard-phase-check`** - the gate: every participating shard clean, plus the phase's acceptance suite green, before the phase can advance.
+- **`/shard-status`** - the whole graph, per-shard drift, and the blast radius of a change.
+
+The [full command reference](#the-plugin-commands) and the [standalone CLI](#the-engine-directly-no-plugin) are below.
+
 ## How it works
 
 Everything lives on disk, so sessions are disposable and re-orient themselves from files rather than memory.
