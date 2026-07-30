@@ -11,6 +11,7 @@
 import { build } from "esbuild";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { realpathSync } from "node:fs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -34,6 +35,9 @@ export async function buildBundle(outfile = BUNDLE_PATH) {
   return outfile;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compare real paths, not URL strings: `import.meta.url` percent-encodes, so a
+// checkout path containing a space would never match `file://${argv[1]}` and
+// `npm run build` would become a silent no-op that still exits 0.
+if (process.argv[1] && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1])) {
   await buildBundle(process.argv[2]);
 }

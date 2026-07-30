@@ -34,6 +34,8 @@ export interface OrchestrationResult {
   plan: OrchestrationPlan;
   runs: ShardRun[];
   gate: PhaseCheckResult | null;
+  /** Set when the gate itself could not run - never a pass. */
+  gateError?: string;
   passed: boolean;
 }
 
@@ -116,8 +118,20 @@ export async function orchestrate(
     }
   }
 
-  const gate = options.skipGate ? null : checkPhase(root);
-  return { plan, runs, gate, passed: gate ? gate.passed : false };
+  // The gate must not be able to discard the run. By the time it executes,
+  // every session has already been spawned, so letting checkPhase throw would
+  // lose all of `runs` and surface as an unhandled rejection with no output -
+  // the worst possible outcome, since the expensive part already happened.
+  let gate: PhaseCheckResult | null = null;
+  let gateError: string | undefined;
+  if (!options.skipGate) {
+    try {
+      gate = checkPhase(root);
+    } catch (e: any) {
+      gateError = String(e?.message ?? e);
+    }
+  }
+  return { plan, runs, gate, gateError, passed: gate ? gate.passed : false };
 }
 
 /**

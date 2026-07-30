@@ -3,10 +3,13 @@ import { join, relative } from "node:path";
 import { loadContract } from "../contract/model";
 import { loadManifest } from "../manifest/model";
 import { readAck } from "../shard/ack";
-import { extractSurface, getAdapter, surfaceExists } from "../adapters/index";
+import {
+  extractSurface, getAdapter, surfaceExists,
+  type SurfaceAdapter, type SurfaceRole,
+} from "../adapters/index";
 import { diffSurface } from "../surface/diff";
 import { lintConventions, type ConventionRules } from "../conventions/lint";
-import type { Finding } from "../surface/types";
+import type { Finding, StructuralSurface } from "../surface/types";
 
 export interface ShardCheckResult {
   shard: string;
@@ -16,6 +19,37 @@ export interface ShardCheckResult {
   contractVersion: string;
   verifiedAgainst: string;
   versionStale: boolean;
+}
+
+/**
+ * Read one slice's surface, turning any failure into a finding.
+ *
+ * A malformed or unrepresentable surface is drift like any other: the shard
+ * declared something the checker cannot match against the contract. Letting the
+ * adapter's exception escape would abort the whole command, so `/shard-check`
+ * would print a stack trace instead of the JSON the slash commands parse - and
+ * one bad file in one shard would take down `status` and the phase gate for
+ * every other shard too.
+ */
+function readSurface(
+  adapter: SurfaceAdapter,
+  shardDir: string,
+  slice: string,
+  role: SurfaceRole,
+  root: string,
+  findings: Finding[],
+): StructuralSurface | null {
+  try {
+    return extractSurface(adapter, shardDir, slice, role);
+  } catch (e: any) {
+    findings.push({
+      slice,
+      kind: "invalid-surface",
+      location: `${slice} (${role} surface at ${relative(root, adapter.locate(shardDir, slice, role))})`,
+      actual: String(e?.message ?? e),
+    });
+    return null;
+  }
 }
 
 export function checkShard(root: string, shardName: string): ShardCheckResult {
@@ -44,7 +78,8 @@ export function checkShard(root: string, shardName: string): ShardCheckResult {
       });
       continue;
     }
-    const extracted = extractSurface(adapter, shardDir, slice, "provided");
+    const extracted = readSurface(adapter, shardDir, slice, "provided", root, findings);
+    if (!extracted) continue;
     findings.push(...diffSurface(expected, extracted));
     findings.push(...lintConventions(extracted, rules));
   }
@@ -66,7 +101,8 @@ export function checkShard(root: string, shardName: string): ShardCheckResult {
       });
       continue;
     }
-    const snapshot = extractSurface(adapter, shardDir, slice, "consumed");
+    const snapshot = readSurface(adapter, shardDir, slice, "consumed", root, findings);
+    if (!snapshot) continue;
     findings.push(...diffSurface(expected, snapshot));
   }
 

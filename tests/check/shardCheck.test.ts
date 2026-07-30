@@ -55,3 +55,33 @@ describe("checkShard", () => {
     expect(result.findings).toContainEqual({ slice: "Order", kind: "missing-field", location: "Order.id", expected: "string" });
   });
 });
+
+describe("checkShard - unreadable surfaces", () => {
+  it("reports an invalid surface as a finding instead of throwing", () => {
+    // The IR validator made this abort the command, so /shard-check printed a
+    // stack trace instead of the JSON the slash commands parse - and one bad
+    // file took down status and the phase gate for every other shard too.
+    const { root } = scaffold() as any;
+    writeFileSync(join(root, "shards", "orders", "surface", "Order.json"), JSON.stringify({
+      slice: "Order",
+      symbols: { Order: { name: "Order", kind: "type",
+        shape: { kind: "object", fields: { id: { type: { kind: "primitive", name: "string" } } } } } },
+    }));
+
+    const result = checkShard(root, "orders");
+    expect(result.clean).toBe(false);
+    const finding = result.findings.find((f) => f.kind === "invalid-surface")!;
+    expect(finding).toBeDefined();
+    // Names the file, so the fix is actionable.
+    expect(finding.location).toMatch(/shards\/orders\/surface\/Order\.json/);
+    expect(finding.actual).toMatch(/required/);
+  });
+
+  it("reports malformed JSON as a finding too", () => {
+    const { root } = scaffold() as any;
+    writeFileSync(join(root, "shards", "orders", "surface", "Order.json"), "{ not json");
+    const result = checkShard(root, "orders");
+    expect(result.clean).toBe(false);
+    expect(result.findings.some((f) => f.kind === "invalid-surface")).toBe(true);
+  });
+});

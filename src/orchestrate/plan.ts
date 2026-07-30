@@ -26,8 +26,10 @@ export interface OrchestrationPlan {
   phase: string;
   contractVersion: string;
   waves: Wave[];
-  /** Shards with no ordering relative to each other because they form a cycle. */
+  /** Shards genuinely on a dependency cycle, so they have no relative order. */
   cyclic: string[];
+  /** Shards not on a cycle, but blocked behind one. */
+  blocked: string[];
   /** Slices consumed in this phase that no participating shard provides. */
   unprovided: Array<{ shard: string; slice: string }>;
 }
@@ -87,8 +89,30 @@ export function planPhase(root: string): OrchestrationPlan {
     remaining = remaining.filter((name) => !placed.has(name));
   }
 
-  const cyclic = [...remaining].sort();
-  if (cyclic.length > 0) waves.push({ index: waves.length, shards: cyclic });
+  // Everything still unplaced is blocked, but only some of it is actually in a
+  // cycle - the rest merely depends on something that is. Reporting a
+  // downstream shard as "cyclic" tells the conductor to go looking for a cycle
+  // it is not part of, so the two are separated.
+  const stuck = new Set(remaining);
+  const onCycle = (name: string): boolean => {
+    const seen = new Set<string>();
+    const reaches = (from: string): boolean => {
+      for (const dep of deps.get(from) ?? []) {
+        if (!stuck.has(dep)) continue;
+        if (dep === name) return true;
+        if (!seen.has(dep)) {
+          seen.add(dep);
+          if (reaches(dep)) return true;
+        }
+      }
+      return false;
+    };
+    return reaches(name);
+  };
 
-  return { phase: phase.id, contractVersion: phase.contractVersion, waves, cyclic, unprovided };
+  const cyclic = remaining.filter(onCycle).sort();
+  const blocked = remaining.filter((n) => !cyclic.includes(n)).sort();
+  if (remaining.length > 0) waves.push({ index: waves.length, shards: [...remaining].sort() });
+
+  return { phase: phase.id, contractVersion: phase.contractVersion, waves, cyclic, blocked, unprovided };
 }

@@ -79,3 +79,25 @@ describe("planPhase", () => {
     expect(plan.contractVersion).toBe("v1");
   });
 });
+
+describe("planPhase - review regressions", () => {
+  it("separates shards on a cycle from shards merely blocked behind one", () => {
+    // Everything unplaced used to be labelled `cyclic`, sending the conductor
+    // looking for a cycle that a downstream shard is not part of.
+    const root = scaffoldGraph({
+      a: { provides: ["A"], consumes: ["B"] },
+      b: { provides: ["B"], consumes: ["A"] },
+      c: { consumes: ["A"] },
+    });
+    const plan = planPhase(root);
+    expect(plan.cyclic).toEqual(["a", "b"]);
+    expect(plan.blocked).toEqual(["c"]);
+  });
+
+  it("reports no blocked shards when there is no cycle", () => {
+    const root = scaffoldGraph({ a: { provides: ["A"] }, b: { consumes: ["A"] } });
+    const plan = planPhase(root);
+    expect(plan.cyclic).toEqual([]);
+    expect(plan.blocked).toEqual([]);
+  });
+});

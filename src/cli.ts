@@ -9,11 +9,30 @@ import { resolveRoot } from "./workspace/root";
 import { planPhase } from "./orchestrate/plan";
 import { commandDispatcher, orchestrate } from "./orchestrate/run";
 
+/**
+ * Parse `--key value`, `--key=value`, and bare boolean `--key`.
+ *
+ * A boolean flag must NOT swallow the next argument: `--skip-gate
+ * --session-cmd '<cmd>'` previously parsed to `{"skip-gate": "--session-cmd"}`,
+ * silently dropping the session command entirely, so the orchestrator spawned
+ * nothing while still reporting a plan. Only one argument order worked.
+ */
 function flags(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i].startsWith("--")) {
-      out[argv[i].slice(2)] = argv[i + 1];
+    const arg = argv[i];
+    if (!arg.startsWith("--")) continue;
+
+    const eq = arg.indexOf("=");
+    if (eq !== -1) {
+      out[arg.slice(2, eq)] = arg.slice(eq + 1);
+      continue;
+    }
+    const next = argv[i + 1];
+    if (next === undefined || next.startsWith("--")) {
+      out[arg.slice(2)] = "true";
+    } else {
+      out[arg.slice(2)] = next;
       i++;
     }
   }

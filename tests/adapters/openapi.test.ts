@@ -124,3 +124,32 @@ describe("openapi adapter", () => {
     expect(adapter.locate(dir, "Order", "provided")).toMatch(/surface\/Order\.openapi\.json$/);
   });
 });
+
+describe("openapi adapter - review regressions", () => {
+  it("merges allOf instead of collapsing it to a null primitive", () => {
+    const surface = extract(JSON.stringify({
+      components: { schemas: { Order: { allOf: [
+        { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+        { type: "object", properties: { total: { type: "number" } } },
+      ] } } },
+    }));
+    const fields = (surface.symbols.Order.shape as any).fields;
+    expect(fields.id).toEqual({ type: { kind: "primitive", name: "string" }, required: true });
+    expect(fields.total).toEqual({ type: { kind: "primitive", name: "number" }, required: false });
+  });
+
+  it("fails on a multi-branch oneOf rather than inventing a shape", () => {
+    expect(() => extract(JSON.stringify({
+      components: { schemas: { Order: { oneOf: [{ type: "string" }, { type: "number" }] } } },
+    }))).toThrow(/oneOf with 2 branches has no structural equivalent/);
+  });
+
+  it("refuses an operationId that collides with a schema name", () => {
+    // Operations are written second into the same map, so this silently
+    // replaced the schema's type symbol and deleted it from the surface.
+    expect(() => extract(JSON.stringify({
+      components: { schemas: { getOrder: { type: "object", properties: {} } } },
+      paths: { "/o": { get: { operationId: "getOrder", responses: { "200": {} } } } },
+    }))).toThrow(/collides with an existing type symbol/);
+  });
+});

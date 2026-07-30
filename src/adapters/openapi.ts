@@ -111,6 +111,15 @@ export const openApiAdapter: SurfaceAdapter = {
         const op = item[method];
         if (!op) continue;
         const name = operationName(op, method, path);
+        // Operations are written after schemas into the same map, so an
+        // operationId equal to a schema name would silently replace that
+        // schema's `type` symbol and delete it from the surface.
+        if (symbols[name]) {
+          throw new Error(
+            `operation "${name}" collides with an existing ${symbols[name].kind} symbol of the same name. ` +
+              `Rename the operationId or the schema - a surface cannot hold two symbols under one name.`,
+          );
+        }
         symbols[name] = {
           name,
           kind: "endpoint",

@@ -7608,6 +7608,11 @@ function toShape(ts, node, source, path) {
     case ts.SyntaxKind.BooleanKeyword:
       return { kind: "primitive", name: "boolean" };
     case ts.SyntaxKind.NullKeyword:
+    // `void` and `undefined` are "returns nothing", which the canonical
+    // surface spells as the null primitive. A consumer depends on the absence
+    // of a value in exactly the same way.
+    case ts.SyntaxKind.VoidKeyword:
+    case ts.SyntaxKind.UndefinedKeyword:
       return { kind: "primitive", name: "null" };
   }
   if (ts.isLiteralTypeNode(node) && node.literal.kind === ts.SyntaxKind.NullKeyword) {
@@ -7643,7 +7648,9 @@ function toShape(ts, node, source, path) {
 function membersToFields(ts, members, source, path) {
   const fields = {};
   for (const member of members) {
-    if (!member.name) continue;
+    if (!member.name) {
+      unsupported(ts, member, source, path);
+    }
     const name = member.name.getText();
     const fieldPath = `${path}.${name}`;
     if (ts.isPropertySignature(member)) {
@@ -7656,6 +7663,17 @@ function membersToFields(ts, members, source, path) {
     }
     if (ts.isMethodSignature(member)) {
       fields[name] = { type: signatureToShape(ts, member, source, fieldPath), required: true };
+      continue;
+    }
+    if (ts.isPropertyDeclaration(member) || ts.isMethodDeclaration(member)) {
+      const hidden = member.modifiers?.some(
+        (m) => m.kind === ts.SyntaxKind.PrivateKeyword || m.kind === ts.SyntaxKind.ProtectedKeyword
+      );
+      if (hidden) continue;
+      fields[name] = ts.isMethodDeclaration(member) ? { type: signatureToShape(ts, member, source, fieldPath), required: true } : {
+        type: member.type ? toShape(ts, member.type, source, fieldPath) : unsupported(ts, member, source, fieldPath),
+        required: member.questionToken === void 0
+      };
       continue;
     }
     unsupported(ts, member, source, fieldPath);
@@ -7695,6 +7713,29 @@ var dtsAdapter = {
     const shardDir = source.replace(/[/\\]surface[/\\].*$/, "");
     const ts = loadTypeScript(shardDir, source);
     const sf = ts.createSourceFile(source, raw, ts.ScriptTarget.Latest, true);
+    const localInterfaces = /* @__PURE__ */ new Map();
+    for (const stmt of sf.statements) {
+      if (ts.isInterfaceDeclaration(stmt)) localInterfaces.set(stmt.name.text, stmt);
+    }
+    const interfaceFields = (decl, name, seen) => {
+      if (seen.has(name)) return {};
+      seen.add(name);
+      const inherited = {};
+      for (const clause of decl.heritageClauses ?? []) {
+        if (clause.token !== ts.SyntaxKind.ExtendsKeyword) continue;
+        for (const t of clause.types) {
+          const baseName = t.expression.getText();
+          const base = localInterfaces.get(baseName);
+          if (!base) {
+            throw new Error(
+              `${source}: ${name} extends ${baseName}, which is not declared in this file. The dts adapter reads one emitted declaration file and cannot resolve a base from another. Emit the slice's declarations together, or declare this slice with the identity adapter.`
+            );
+          }
+          Object.assign(inherited, interfaceFields(base, baseName, seen));
+        }
+      }
+      return { ...inherited, ...membersToFields(ts, decl.members, source, name) };
+    };
     const symbols = {};
     for (const stmt of sf.statements) {
       if (!isExported(ts, stmt)) continue;
@@ -7703,8 +7744,28 @@ var dtsAdapter = {
         symbols[name] = {
           name,
           kind: "type",
+          shape: { kind: "object", fields: interfaceFields(stmt, name, /* @__PURE__ */ new Set()) }
+        };
+      } else if (ts.isEnumDeclaration(stmt)) {
+        const name = stmt.name.text;
+        symbols[name] = {
+          name,
+          kind: "type",
+          shape: { kind: "enum", values: stmt.members.map((m) => m.name.getText()) }
+        };
+      } else if (ts.isClassDeclaration(stmt) && stmt.name) {
+        const name = stmt.name.text;
+        symbols[name] = {
+          name,
+          kind: "type",
           shape: { kind: "object", fields: membersToFields(ts, stmt.members, source, name) }
         };
+      } else if (ts.isVariableStatement(stmt)) {
+        for (const decl of stmt.declarationList.declarations) {
+          const name = decl.name.getText();
+          if (!decl.type) unsupported(ts, decl, source, name);
+          symbols[name] = { name, kind: "type", shape: toShape(ts, decl.type, source, name) };
+        }
       } else if (ts.isTypeAliasDeclaration(stmt)) {
         const name = stmt.name.text;
         symbols[name] = { name, kind: "type", shape: toShape(ts, stmt.type, source, name) };
@@ -7737,6 +7798,16 @@ function jsonSchemaToShape(node) {
   if (!node || typeof node !== "object") return { kind: "primitive", name: "null" };
   if (node.$ref) return { kind: "ref", name: String(node.$ref).split("/").pop() ?? "" };
   if (node.enum) return { kind: "enum", values: node.enum.map(String) };
+  if (Array.isArray(node.allOf)) return mergeAll(node.allOf);
+  for (const key of ["oneOf", "anyOf"]) {
+    const branches = node[key];
+    if (Array.isArray(branches)) {
+      if (branches.length === 1) return jsonSchemaToShape(branches[0]);
+      throw new Error(
+        `${key} with ${branches.length} branches has no structural equivalent in the canonical surface. Model the shared shape with allOf or $ref, or declare this slice with the identity adapter.`
+      );
+    }
+  }
   if (node.type === "object" || node.type === void 0 && node.properties) {
     return { kind: "object", fields: propertiesToFields(node) };
   }
@@ -7753,6 +7824,14 @@ function jsonSchemaToShape(node) {
     default:
       return { kind: "primitive", name: "null" };
   }
+}
+function mergeAll(branches) {
+  const fields = {};
+  for (const branch of branches) {
+    const shape = jsonSchemaToShape(branch);
+    if (shape.kind === "object") Object.assign(fields, shape.fields);
+  }
+  return { kind: "object", fields };
 }
 function propertiesToFields(node) {
   const required = node?.required ?? [];
@@ -7839,6 +7918,11 @@ var openApiAdapter = {
         const op = item[method];
         if (!op) continue;
         const name = operationName(op, method, path);
+        if (symbols[name]) {
+          throw new Error(
+            `operation "${name}" collides with an existing ${symbols[name].kind} symbol of the same name. Rename the operationId or the schema - a surface cannot hold two symbols under one name.`
+          );
+        }
         symbols[name] = {
           name,
           kind: "endpoint",
@@ -7878,7 +7962,45 @@ var SCALAR_TO_PRIMITIVE = {
   bytes: "string"
 };
 function stripComments(src) {
-  return src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === '"' || ch === "'") {
+      const quote = ch;
+      out += ch;
+      i++;
+      while (i < src.length) {
+        if (src[i] === "\\") {
+          out += src[i] + (src[i + 1] ?? "");
+          i += 2;
+          continue;
+        }
+        out += src[i];
+        if (src[i] === quote) {
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    if (ch === "/" && src[i + 1] === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+      out += " ";
+      continue;
+    }
+    if (ch === "/" && src[i + 1] === "*") {
+      i += 2;
+      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
+      i += 2;
+      out += " ";
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
 }
 function scalarShape(type) {
   const primitive = SCALAR_TO_PRIMITIVE[type];
@@ -7912,8 +8034,18 @@ function withoutNestedBlocks(body) {
 }
 var FIELD_RE = /(?:^|;)\s*(repeated\s+|optional\s+)?([A-Za-z_][\w.]*)\s+([A-Za-z_]\w*)\s*=\s*\d+/g;
 var MAP_FIELD_RE = /(?:^|;)\s*map\s*<\s*([A-Za-z_][\w.]*)\s*,\s*([A-Za-z_][\w.]*)\s*>\s*([A-Za-z_]\w*)\s*=\s*\d+/g;
+function inlineOneofs(body) {
+  let out = body;
+  for (; ; ) {
+    const m = /\boneof\s+[A-Za-z_]\w*/.exec(out);
+    if (!m) return out;
+    const block = readBlock(out, m.index + m[0].length);
+    if (!block) return out;
+    out = `${out.slice(0, m.index)};${block.body};${out.slice(block.end)}`;
+  }
+}
 function messageFields(body) {
-  const flat = withoutNestedBlocks(body);
+  const flat = withoutNestedBlocks(inlineOneofs(body));
   const fields = {};
   for (const m of flat.matchAll(MAP_FIELD_RE)) {
     const [, , valueType, name] = m;
@@ -8124,6 +8256,19 @@ function lintConventions(surface, rules) {
 }
 
 // src/check/shardCheck.ts
+function readSurface(adapter, shardDir, slice, role, root, findings) {
+  try {
+    return extractSurface(adapter, shardDir, slice, role);
+  } catch (e) {
+    findings.push({
+      slice,
+      kind: "invalid-surface",
+      location: `${slice} (${role} surface at ${relative(root, adapter.locate(shardDir, slice, role))})`,
+      actual: String(e?.message ?? e)
+    });
+    return null;
+  }
+}
 function checkShard(root, shardName) {
   const manifest = loadManifest(root);
   const contract = loadContract(root);
@@ -8148,7 +8293,8 @@ function checkShard(root, shardName) {
       });
       continue;
     }
-    const extracted = extractSurface(adapter, shardDir, slice, "provided");
+    const extracted = readSurface(adapter, shardDir, slice, "provided", root, findings);
+    if (!extracted) continue;
     findings.push(...diffSurface(expected, extracted));
     findings.push(...lintConventions(extracted, rules));
   }
@@ -8166,7 +8312,8 @@ function checkShard(root, shardName) {
       });
       continue;
     }
-    const snapshot = extractSurface(adapter, shardDir, slice, "consumed");
+    const snapshot = readSurface(adapter, shardDir, slice, "consumed", root, findings);
+    if (!snapshot) continue;
     findings.push(...diffSurface(expected, snapshot));
   }
   const verifiedAgainst = readAck(shardDir) ?? manifest.contractVersion;
@@ -8317,9 +8464,26 @@ function planPhase(root) {
     for (const name of ready) placed.add(name);
     remaining = remaining.filter((name) => !placed.has(name));
   }
-  const cyclic = [...remaining].sort();
-  if (cyclic.length > 0) waves.push({ index: waves.length, shards: cyclic });
-  return { phase: phase.id, contractVersion: phase.contractVersion, waves, cyclic, unprovided };
+  const stuck = new Set(remaining);
+  const onCycle = (name) => {
+    const seen = /* @__PURE__ */ new Set();
+    const reaches = (from) => {
+      for (const dep of deps.get(from) ?? []) {
+        if (!stuck.has(dep)) continue;
+        if (dep === name) return true;
+        if (!seen.has(dep)) {
+          seen.add(dep);
+          if (reaches(dep)) return true;
+        }
+      }
+      return false;
+    };
+    return reaches(name);
+  };
+  const cyclic = remaining.filter(onCycle).sort();
+  const blocked = remaining.filter((n) => !cyclic.includes(n)).sort();
+  if (remaining.length > 0) waves.push({ index: waves.length, shards: [...remaining].sort() });
+  return { phase: phase.id, contractVersion: phase.contractVersion, waves, cyclic, blocked, unprovided };
 }
 
 // src/orchestrate/run.ts
@@ -8373,8 +8537,16 @@ async function orchestrate(root, options = {}) {
       runs.push(...results);
     }
   }
-  const gate = options.skipGate ? null : checkPhase(root);
-  return { plan, runs, gate, passed: gate ? gate.passed : false };
+  let gate = null;
+  let gateError;
+  if (!options.skipGate) {
+    try {
+      gate = checkPhase(root);
+    } catch (e) {
+      gateError = String(e?.message ?? e);
+    }
+  }
+  return { plan, runs, gate, gateError, passed: gate ? gate.passed : false };
 }
 function safeCheck(root, shard) {
   try {
@@ -8388,8 +8560,18 @@ function safeCheck(root, shard) {
 function flags(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i].startsWith("--")) {
-      out[argv[i].slice(2)] = argv[i + 1];
+    const arg = argv[i];
+    if (!arg.startsWith("--")) continue;
+    const eq = arg.indexOf("=");
+    if (eq !== -1) {
+      out[arg.slice(2, eq)] = arg.slice(eq + 1);
+      continue;
+    }
+    const next = argv[i + 1];
+    if (next === void 0 || next.startsWith("--")) {
+      out[arg.slice(2)] = "true";
+    } else {
+      out[arg.slice(2)] = next;
       i++;
     }
   }

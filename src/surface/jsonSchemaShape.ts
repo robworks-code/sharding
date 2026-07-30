@@ -15,6 +15,25 @@ export function jsonSchemaToShape(node: any): ShapeType {
   if (node.$ref) return { kind: "ref", name: String(node.$ref).split("/").pop() ?? "" };
   if (node.enum) return { kind: "enum", values: node.enum.map(String) };
 
+  // Composition keywords. These are rare in hand-written JSON Schema but very
+  // common in generated OpenAPI, where `allOf` is the usual way to express
+  // "this model plus these fields" - so collapsing them to a null primitive
+  // (the old default branch) meant the differ reported confident type-mismatch
+  // findings against a shape nobody declared.
+  if (Array.isArray(node.allOf)) return mergeAll(node.allOf);
+  for (const key of ["oneOf", "anyOf"] as const) {
+    const branches = node[key];
+    if (Array.isArray(branches)) {
+      if (branches.length === 1) return jsonSchemaToShape(branches[0]);
+      // A genuine union of differing shapes has no canonical representation.
+      // Failing names the schema; guessing would not.
+      throw new Error(
+        `${key} with ${branches.length} branches has no structural equivalent in the canonical surface. ` +
+          `Model the shared shape with allOf or $ref, or declare this slice with the identity adapter.`,
+      );
+    }
+  }
+
   // A node with `properties` is an object even when it omits an explicit
   // "type": "object" (valid, common JSON Schema) - inferring it here keeps
   // the field structure instead of collapsing it to a bare null primitive.
@@ -32,6 +51,21 @@ export function jsonSchemaToShape(node: any): ShapeType {
     default:
       return { kind: "primitive", name: "null" };
   }
+}
+
+/**
+ * `allOf` is intersection: merge every branch's fields into one object. A
+ * branch that is a `$ref` cannot be followed here (the mapper sees one schema,
+ * not the document), so it contributes nothing structurally - the ref is
+ * already compared by name wherever it appears as a field type.
+ */
+function mergeAll(branches: any[]): ShapeType {
+  const fields: Record<string, Field> = {};
+  for (const branch of branches) {
+    const shape = jsonSchemaToShape(branch);
+    if (shape.kind === "object") Object.assign(fields, shape.fields);
+  }
+  return { kind: "object", fields };
 }
 
 /** Map a schema's `properties` + `required` list to canonical fields. */

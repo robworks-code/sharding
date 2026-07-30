@@ -65,6 +65,11 @@ function toShape(ts: TsModule, node: any, source: string, path: string): ShapeTy
     case ts.SyntaxKind.BooleanKeyword:
       return { kind: "primitive", name: "boolean" };
     case ts.SyntaxKind.NullKeyword:
+    // `void` and `undefined` are "returns nothing", which the canonical
+    // surface spells as the null primitive. A consumer depends on the absence
+    // of a value in exactly the same way.
+    case ts.SyntaxKind.VoidKeyword:
+    case ts.SyntaxKind.UndefinedKeyword:
       return { kind: "primitive", name: "null" };
   }
 
@@ -108,7 +113,12 @@ function toShape(ts: TsModule, node: any, source: string, path: string): ShapeTy
 function membersToFields(ts: TsModule, members: any, source: string, path: string): Record<string, Field> {
   const fields: Record<string, Field> = {};
   for (const member of members) {
-    if (!member.name) continue;
+    if (!member.name) {
+      // Index / call / construct signatures. Skipping them silently would
+      // under-report the surface, which is the failure mode this adapter
+      // exists to avoid.
+      unsupported(ts, member, source, path);
+    }
     const name = member.name.getText();
     const fieldPath = `${path}.${name}`;
 
@@ -122,6 +132,22 @@ function membersToFields(ts: TsModule, members: any, source: string, path: strin
     }
     if (ts.isMethodSignature(member)) {
       fields[name] = { type: signatureToShape(ts, member, source, fieldPath), required: true };
+      continue;
+    }
+    if (ts.isPropertyDeclaration(member) || ts.isMethodDeclaration(member)) {
+      // Class members: skip anything not publicly reachable, since a consumer
+      // cannot depend on it.
+      const hidden = member.modifiers?.some(
+        (m: any) =>
+          m.kind === ts.SyntaxKind.PrivateKeyword || m.kind === ts.SyntaxKind.ProtectedKeyword,
+      );
+      if (hidden) continue;
+      fields[name] = ts.isMethodDeclaration(member)
+        ? { type: signatureToShape(ts, member, source, fieldPath), required: true }
+        : {
+            type: member.type ? toShape(ts, member.type, source, fieldPath) : unsupported(ts, member, source, fieldPath),
+            required: member.questionToken === undefined,
+          };
       continue;
     }
     unsupported(ts, member, source, fieldPath);
@@ -176,6 +202,47 @@ export const dtsAdapter: SurfaceAdapter = {
     const ts = loadTypeScript(shardDir, source);
     const sf = ts.createSourceFile(source, raw, ts.ScriptTarget.Latest, true);
 
+    // Interfaces are indexed first so `extends` can be resolved against
+    // declarations in the same file, including non-exported bases.
+    const localInterfaces = new Map<string, any>();
+    for (const stmt of sf.statements) {
+      if (ts.isInterfaceDeclaration(stmt)) localInterfaces.set(stmt.name.text, stmt);
+    }
+
+    /**
+     * Flatten an interface's `extends` chain. Without this the heritage clause
+     * is ignored entirely and the declared surface under-reports what a
+     * consumer can actually use - a silent degradation, unlike everything else
+     * here, which fails loudly. A base declared in another file cannot be
+     * resolved without a full program, so that case fails rather than guessing.
+     */
+    const interfaceFields = (
+      decl: any,
+      name: string,
+      seen: Set<string>,
+    ): Record<string, Field> => {
+      if (seen.has(name)) return {}; // cyclic extends: TS rejects it, but do not hang
+      seen.add(name);
+      const inherited: Record<string, Field> = {};
+      for (const clause of decl.heritageClauses ?? []) {
+        if (clause.token !== ts.SyntaxKind.ExtendsKeyword) continue;
+        for (const t of clause.types) {
+          const baseName = t.expression.getText();
+          const base = localInterfaces.get(baseName);
+          if (!base) {
+            throw new Error(
+              `${source}: ${name} extends ${baseName}, which is not declared in this file. ` +
+                `The dts adapter reads one emitted declaration file and cannot resolve a base from another. ` +
+                `Emit the slice's declarations together, or declare this slice with the identity adapter.`,
+            );
+          }
+          Object.assign(inherited, interfaceFields(base, baseName, seen));
+        }
+      }
+      // Own members win over inherited ones, which is what `extends` means.
+      return { ...inherited, ...membersToFields(ts, decl.members, source, name) };
+    };
+
     const symbols: Record<string, SurfaceSymbol> = {};
     for (const stmt of sf.statements) {
       // Only the exported declarations are surface. Anything else in the
@@ -187,8 +254,28 @@ export const dtsAdapter: SurfaceAdapter = {
         symbols[name] = {
           name,
           kind: "type",
+          shape: { kind: "object", fields: interfaceFields(stmt, name, new Set()) },
+        };
+      } else if (ts.isEnumDeclaration(stmt)) {
+        const name = stmt.name.text;
+        symbols[name] = {
+          name,
+          kind: "type",
+          shape: { kind: "enum", values: stmt.members.map((m: any) => m.name.getText()) },
+        };
+      } else if (ts.isClassDeclaration(stmt) && stmt.name) {
+        const name = stmt.name.text;
+        symbols[name] = {
+          name,
+          kind: "type",
           shape: { kind: "object", fields: membersToFields(ts, stmt.members, source, name) },
         };
+      } else if (ts.isVariableStatement(stmt)) {
+        for (const decl of stmt.declarationList.declarations) {
+          const name = decl.name.getText();
+          if (!decl.type) unsupported(ts, decl, source, name);
+          symbols[name] = { name, kind: "type", shape: toShape(ts, decl.type, source, name) };
+        }
       } else if (ts.isTypeAliasDeclaration(stmt)) {
         const name = stmt.name.text;
         symbols[name] = { name, kind: "type", shape: toShape(ts, stmt.type, source, name) };

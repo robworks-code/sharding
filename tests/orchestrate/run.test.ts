@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { orchestrate, type Dispatcher } from "../../src/orchestrate/run";
+import { runAsync } from "../../src/cli";
 import { scaffoldGraph } from "./fixture";
 
 const noopDispatch: Dispatcher = async () => ({ exitCode: 0, output: "" });
@@ -94,14 +95,41 @@ describe("orchestrate", () => {
     expect(result.runs.find((r) => r.shard === "b")!.dispatched).toBe(true);
   });
 
-  it("reports a null check rather than aborting when a surface is unreadable", async () => {
+  it("reports an unreadable surface as a finding, and still runs the gate", async () => {
+    // Regression: this test used to pass `skipGate: true`, which hid that
+    // checkPhase threw on the same unreadable file - rejecting the whole
+    // orchestration AFTER every session had been spawned, losing every run.
     const root = scaffoldGraph({ a: { provides: ["A"] }, b: { provides: ["B"] } });
     writeFileSync(join(root, "shards", "a", "surface", "A.json"), "{ not json");
 
-    const result = await orchestrate(root, { dispatch: noopDispatch, skipGate: true });
-    expect(result.runs.find((r) => r.shard === "a")!.check).toBeNull();
-    // The rest of the run is still worth having.
+    const result = await orchestrate(root, { dispatch: noopDispatch });
+
+    const a = result.runs.find((r) => r.shard === "a")!;
+    expect(a.check?.clean).toBe(false);
+    expect(a.check?.findings[0].kind).toBe("invalid-surface");
+    // The rest of the run is still worth having, and the gate still ran.
     expect(result.runs.find((r) => r.shard === "b")!.check?.clean).toBe(true);
+    expect(result.gate).not.toBeNull();
+    expect(result.passed).toBe(false);
+  });
+
+  it("never loses the runs when the gate itself cannot run", async () => {
+    // The sessions are the expensive, already-completed part. A gate that
+    // cannot execute must be reported, not thrown past.
+    // The failure has to land between planning and gating, so the dispatcher
+    // itself pulls the contract out from under the run - which is also a real
+    // scenario: the conductor amending the contract while a wave is in flight.
+    const root = scaffoldGraph({ a: { provides: ["A"] } });
+    const result = await orchestrate(root, {
+      dispatch: async () => {
+        rmSync(join(root, "contract", "VERSION"));
+        return { exitCode: 0, output: "" };
+      },
+    });
+    expect(result.runs).toHaveLength(1);
+    expect(result.gate).toBeNull();
+    expect(result.gateError).toBeTruthy();
+    expect(result.passed).toBe(false);
   });
 
   it("runs the phase gate and passes when everything is clean and acknowledged", async () => {
@@ -117,5 +145,31 @@ describe("orchestrate", () => {
     expect(result.gate).toBeNull();
     // No gate run means no basis for a pass, so the honest answer is false.
     expect(result.passed).toBe(false);
+  });
+});
+
+describe("orchestrate CLI flags", () => {
+  it("honors --session-cmd regardless of where --skip-gate sits", async () => {
+    // `--skip-gate --session-cmd '<cmd>'` used to parse as
+    // {"skip-gate": "--session-cmd"} - the session command vanished, so the
+    // orchestrator spawned nothing while still reporting a plan and exiting 1.
+    // Only the reverse order worked, and both are documented together.
+    for (const argv of [
+      ["orchestrate", "--skip-gate", "--session-cmd", "echo dispatched"],
+      ["orchestrate", "--session-cmd", "echo dispatched", "--skip-gate"],
+      ["orchestrate", "--session-cmd=echo dispatched", "--skip-gate"],
+    ]) {
+      const root = scaffoldGraph({ a: { provides: ["A"] } });
+      const out = JSON.parse((await runAsync(argv, root)).stdout);
+      expect(out.runs).toHaveLength(1);
+      expect(out.runs[0].output.trim()).toBe("dispatched");
+      expect(out.gate).toBeNull();
+    }
+  });
+
+  it("dispatches nothing when no session command is given", async () => {
+    const root = scaffoldGraph({ a: { provides: ["A"] } });
+    const out = JSON.parse((await runAsync(["orchestrate"], root)).stdout);
+    expect(out.runs).toEqual([]);
   });
 });

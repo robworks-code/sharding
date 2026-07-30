@@ -73,6 +73,7 @@ array elements).
 
 | Finding kind | Means |
 | --- | --- |
+| `invalid-surface` | The surface file exists but could not be read as a canonical surface - malformed JSON, a shape the validator rejects, or something the adapter cannot represent. `actual` carries the reason. This is a finding, not a crash: a surface the checker cannot match is drift like any other. |
 | `missing-symbol` | The contract declares it; the shard's surface does not. |
 | `unexpected-symbol` | The shard's surface declares it; the contract does not. |
 | `kind-mismatch` | Same name, different symbol kind. |
@@ -113,11 +114,20 @@ consumed one from `surface/consumed/`, with the same filename convention:
   (falling back to the slice name); `type: integer` maps to the `number`
   primitive; a node carrying `properties` without an explicit `type` is still
   treated as an object; `$ref` becomes a `ref` to the final path segment.
+  `allOf` is merged into one object, since it is intersection. A multi-branch
+  `oneOf`/`anyOf` has no canonical equivalent and is an error - collapsing it
+  would make the differ report confident findings against a shape nobody
+  declared.
 - **`dts`** - reads what `tsc --emitDeclarationOnly` emits. Only **exported**
-  declarations are surface. Interfaces and type aliases become `type` symbols,
-  functions become `function` symbols shaped as `{params, returns}`, `?:`
-  becomes `required: false`, and a union of string literals becomes an `enum`.
-  A type it cannot represent structurally (an intersection, a mapped type) is a
+  declarations are surface: interfaces, type aliases, enums, classes and
+  `declare const` become `type` symbols, functions become `function` symbols
+  shaped as `{params, returns}`. `?:` becomes `required: false`, a union of
+  string literals becomes an `enum`, and `void`/`undefined` become the `null`
+  primitive. An `extends` chain is flattened, with own members overriding
+  inherited ones; a base declared in *another* file cannot be resolved from a
+  single emitted file and is an error rather than a silent omission. Private
+  and protected class members are not surface. Anything it cannot represent
+  structurally - an intersection, a mapped type, an index signature - is a
   **hard error naming the declaration** rather than a guess. TypeScript is
   resolved from the shard's own `node_modules`, so the shard needs it installed.
 - **`openapi`** - every operation becomes an `endpoint` shaped as

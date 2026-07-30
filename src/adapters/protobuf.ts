@@ -29,11 +29,49 @@ const SCALAR_TO_PRIMITIVE: Record<string, "string" | "number" | "boolean"> = {
   bytes: "string",
 };
 
-/** Strip comments and normalize whitespace without disturbing string literals. */
+/**
+ * Strip comments, genuinely leaving string literals alone.
+ *
+ * A plain `//` line regex is wrong here, and silently so: an `option` carrying
+ * a URL (`option (x) = "https://example.com/y";`) loses the rest of its line
+ * including the terminating `;`, which un-anchors every field that follows and
+ * drops them from the declared surface entirely. Scanning character by
+ * character with a string-literal state is the only way to get this right.
+ */
 function stripComments(src: string): string {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/\/\/[^\n]*/g, " ");
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+
+    if (ch === '"' || ch === "'") {
+      const quote = ch;
+      out += ch;
+      i++;
+      while (i < src.length) {
+        if (src[i] === "\\") { out += src[i] + (src[i + 1] ?? ""); i += 2; continue; }
+        out += src[i];
+        if (src[i] === quote) { i++; break; }
+        i++;
+      }
+      continue;
+    }
+    if (ch === "/" && src[i + 1] === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+      out += " ";
+      continue;
+    }
+    if (ch === "/" && src[i + 1] === "*") {
+      i += 2;
+      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
+      i += 2;
+      out += " ";
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
 }
 
 function scalarShape(type: string): ShapeType {
@@ -86,8 +124,28 @@ function withoutNestedBlocks(body: string): string {
 const FIELD_RE = /(?:^|;)\s*(repeated\s+|optional\s+)?([A-Za-z_][\w.]*)\s+([A-Za-z_]\w*)\s*=\s*\d+/g;
 const MAP_FIELD_RE = /(?:^|;)\s*map\s*<\s*([A-Za-z_][\w.]*)\s*,\s*([A-Za-z_][\w.]*)\s*>\s*([A-Za-z_]\w*)\s*=\s*\d+/g;
 
+/**
+ * Splice `oneof` bodies into the enclosing message.
+ *
+ * A `oneof` is not a nested type - its members are fields of the parent, and
+ * only the grouping is different. Stripping it as a nested block silently drops
+ * every branch from the surface, and unlike a nested message they are not
+ * recovered as symbols in their own right. They are already `required: false`,
+ * which is exactly right: at most one is ever set.
+ */
+function inlineOneofs(body: string): string {
+  let out = body;
+  for (;;) {
+    const m = /\boneof\s+[A-Za-z_]\w*/.exec(out);
+    if (!m) return out;
+    const block = readBlock(out, m.index + m[0].length);
+    if (!block) return out;
+    out = `${out.slice(0, m.index)};${block.body};${out.slice(block.end)}`;
+  }
+}
+
 function messageFields(body: string): Record<string, Field> {
-  const flat = withoutNestedBlocks(body);
+  const flat = withoutNestedBlocks(inlineOneofs(body));
   const fields: Record<string, Field> = {};
 
   // Maps first - their `<k, v>` would otherwise confuse the plain field regex.

@@ -107,3 +107,57 @@ describe("dts adapter", () => {
     );
   });
 });
+
+describe("dts adapter - review regressions", () => {
+  it("flattens an extends chain declared in the same file", () => {
+    // The heritage clause was ignored entirely, so the declared surface
+    // under-reported what a consumer could actually use - silently, unlike
+    // everything else here, which fails loudly.
+    const surface = extract(`
+      interface Base { base: string }
+      interface Middle extends Base { mid?: number }
+      export interface Order extends Middle { id: string }
+    `);
+    const fields = (surface.symbols.Order.shape as any).fields;
+    expect(Object.keys(fields).sort()).toEqual(["base", "id", "mid"]);
+    expect(fields.mid.required).toBe(false);
+  });
+
+  it("lets an own member override an inherited one", () => {
+    const surface = extract(`
+      interface Base { id: number }
+      export interface Order extends Base { id: string }
+    `);
+    expect((surface.symbols.Order.shape as any).fields.id.type).toEqual({
+      kind: "primitive",
+      name: "string",
+    });
+  });
+
+  it("fails when a base is not declared in the same file", () => {
+    expect(() => extract(`export interface Order extends Remote { id: string }`)).toThrow(
+      /extends Remote, which is not declared in this file/,
+    );
+  });
+
+  it("captures exported const, enum and class declarations", () => {
+    // These were dropped entirely, so removing one produced no drift finding.
+    const surface = extract(`
+      export declare const VERSION: string;
+      export declare enum Status { Pending, Shipped }
+      export declare class Svc { run(id: string): void; private hidden: number }
+    `);
+    expect(surface.symbols.VERSION.shape).toEqual({ kind: "primitive", name: "string" });
+    expect(surface.symbols.Status.shape).toEqual({ kind: "enum", values: ["Pending", "Shipped"] });
+    const svc = (surface.symbols.Svc.shape as any).fields;
+    // A private member is not surface - a consumer cannot depend on it.
+    expect(Object.keys(svc)).toEqual(["run"]);
+    expect(svc.run.type.fields.returns.type).toEqual({ kind: "primitive", name: "null" });
+  });
+
+  it("fails on an index signature rather than reporting an empty object", () => {
+    expect(() => extract(`export interface Headers { [k: string]: string }`)).toThrow(
+      /cannot represent structurally \(IndexSignature\)/,
+    );
+  });
+});

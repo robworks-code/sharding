@@ -118,3 +118,34 @@ describe("protobuf adapter", () => {
     });
   });
 });
+
+describe("protobuf adapter - review regressions", () => {
+  it("does not treat // inside a string literal as a comment", () => {
+    // A URL in an option consumed the rest of the line including its `;`,
+    // which un-anchored every following field and emptied the message.
+    const surface = extract(`
+      message Order {
+        option (my.opt) = "https://example.com/x";
+        string id = 1;
+        string name = 2;
+      }
+    `);
+    expect(Object.keys((surface.symbols.Order.shape as any).fields)).toEqual(["id", "name"]);
+  });
+
+  it("keeps oneof branches as fields of the parent message", () => {
+    // A oneof is not a nested type - its members are fields of the parent, and
+    // unlike a nested message they are not recovered as separate symbols.
+    const surface = extract(`
+      message Order {
+        string id = 1;
+        oneof payment { string card = 2; string invoice = 3; }
+        int32 total = 4;
+      }
+    `);
+    const fields = (surface.symbols.Order.shape as any).fields;
+    expect(Object.keys(fields).sort()).toEqual(["card", "id", "invoice", "total"]);
+    // At most one branch is ever set.
+    expect(fields.card.required).toBe(false);
+  });
+});
