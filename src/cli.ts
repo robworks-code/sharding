@@ -16,6 +16,38 @@ import {
 } from "./orchestrate/session";
 import { join } from "node:path";
 
+/** Permission modes the installed Claude Code CLI accepts. */
+const PERMISSION_MODES = ["acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"];
+
+/**
+ * The `--session-*` flags, shared by `orchestrate` and `session-preview`.
+ *
+ * Returns an error string rather than throwing, so both callers report it as
+ * JSON like everything else. A flag written without a value parses to the
+ * literal `"true"` - `--session-model` alone would otherwise spawn
+ * `claude --model true` once per shard, and the only symptom would be N failed
+ * sessions.
+ */
+function sessionOptions(
+  f: Record<string, string>,
+): { options: ShardSessionOptions } | { error: string } {
+  for (const key of ["session-bin", "session-model", "session-permission-mode", "session-task"]) {
+    if (f[key] === "true") return { error: `--${key} needs a value` };
+  }
+  const mode = f["session-permission-mode"];
+  if (mode && !PERMISSION_MODES.includes(mode)) {
+    return { error: `unknown permission mode: ${mode} (known: ${PERMISSION_MODES.join(", ")})` };
+  }
+  return {
+    options: {
+      bin: f["session-bin"],
+      model: f["session-model"],
+      permissionMode: mode,
+      task: f["session-task"],
+    },
+  };
+}
+
 /**
  * Parse `--key value`, `--key=value`, and bare boolean `--key`.
  *
@@ -24,16 +56,6 @@ import { join } from "node:path";
  * silently dropping the session command entirely, so the orchestrator spawned
  * nothing while still reporting a plan. Only one argument order worked.
  */
-/** The `--session-*` flags, shared by `orchestrate` and `session-preview`. */
-function sessionOptions(f: Record<string, string>): ShardSessionOptions {
-  return {
-    bin: f["session-bin"],
-    model: f["session-model"],
-    permissionMode: f["session-permission-mode"],
-    task: f["session-task"],
-  };
-}
-
 function parseArgs(argv: string[]): { flags: Record<string, string>; positionals: string[] } {
   const out: Record<string, string> = {};
   const positionals: string[] = [];
@@ -152,20 +174,23 @@ export function run(argv: string[], cwd: string): { code: number; stdout: string
       const unknown = shards.find((s) => !manifest.shards[s]);
       if (unknown) return { code: 2, stdout: j({ error: `unknown shard: ${unknown}` }) };
 
-      const options = sessionOptions(f);
+      const parsed = sessionOptions(f);
+      if ("error" in parsed) return { code: 2, stdout: j({ error: parsed.error }) };
+      const options = parsed.options;
       return {
         code: 0,
         stdout: j({
           bin: options.bin ?? "claude",
-          sessions: shards.map((shard) => {
-            const prompt = buildShardPrompt(root, shard, { manifest, task: options.task });
-            return {
-              shard,
-              cwd: join(root, manifest.shards[shard].dir),
-              args: claudeSessionArgs(prompt, root, options),
-              prompt,
-            };
-          }),
+          // The prompt is fed on stdin, not argv, so it is reported separately
+          // rather than being buried at the end of `args`. Showing it as an
+          // argument would misrepresent the invocation being approved.
+          promptDelivery: "stdin",
+          args: claudeSessionArgs(root, options),
+          sessions: shards.map((shard) => ({
+            shard,
+            cwd: join(root, manifest.shards[shard].dir),
+            prompt: buildShardPrompt(root, shard, { manifest, task: options.task }),
+          })),
         }),
       };
     }
@@ -205,8 +230,11 @@ export async function runAsync(argv: string[], cwd: string): Promise<{ code: num
     return { code: 2, stdout: j({ error: `unknown session preset: ${preset} (known: claude)` }) };
   }
 
+  const parsed = sessionOptions(f);
+  if ("error" in parsed) return { code: 2, stdout: j({ error: parsed.error }) };
+
   let dispatch;
-  if (preset) dispatch = claudeSessionDispatcher(sessionOptions(f));
+  if (preset) dispatch = claudeSessionDispatcher(parsed.options);
   else if (f["session-cmd"]) dispatch = commandDispatcher(f["session-cmd"]);
 
   const result = await orchestrate(root, {

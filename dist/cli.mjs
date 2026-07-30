@@ -8500,15 +8500,21 @@ import { join as join12 } from "node:path";
 function commandDispatcher(command) {
   return ({ shardDir }) => spawnProcess(command, void 0, shardDir);
 }
-function spawnDispatcher(bin, args, shardDir) {
-  return spawnProcess(bin, args, shardDir);
+function spawnDispatcher(bin, args, shardDir, stdin) {
+  return spawnProcess(bin, args, shardDir, stdin);
 }
-function spawnProcess(command, args, shardDir) {
+function spawnProcess(command, args, shardDir, stdin) {
   return new Promise((resolve4) => {
-    const child = args ? spawn(command, args, { cwd: shardDir, stdio: ["ignore", "pipe", "pipe"] }) : spawn(command, { cwd: shardDir, shell: true, stdio: ["ignore", "pipe", "pipe"] });
+    const stdio = [stdin === void 0 ? "ignore" : "pipe", "pipe", "pipe"];
+    const child = args ? spawn(command, args, { cwd: shardDir, stdio }) : spawn(command, { cwd: shardDir, shell: true, stdio });
+    if (stdin !== void 0 && child.stdin) {
+      child.stdin.on("error", () => {
+      });
+      child.stdin.end(stdin);
+    }
     let output = "";
-    child.stdout.on("data", (d) => output += d);
-    child.stderr.on("data", (d) => output += d);
+    child.stdout?.on("data", (d) => output += d);
+    child.stderr?.on("data", (d) => output += d);
     child.on("error", (e) => resolve4({ exitCode: null, output: output + String(e.message) }));
     child.on("close", (exitCode) => resolve4({ exitCode, output }));
   });
@@ -8518,6 +8524,7 @@ async function orchestrate(root, options = {}) {
   const manifest = loadManifest(root);
   const runs = [];
   let haltedAfterWave;
+  let skipped;
   if (options.dispatch) {
     for (const wave of plan.waves) {
       const results = await Promise.all(
@@ -8552,6 +8559,7 @@ async function orchestrate(root, options = {}) {
       runs.push(...results);
       if (options.haltOnWaveFailure && results.some((r) => r.check?.clean !== true)) {
         haltedAfterWave = wave.index;
+        skipped = plan.waves.filter((w) => w.index > wave.index).flatMap((w) => w.shards);
         break;
       }
     }
@@ -8565,7 +8573,7 @@ async function orchestrate(root, options = {}) {
       gateError = String(e?.message ?? e);
     }
   }
-  return { plan, runs, gate, gateError, haltedAfterWave, passed: gate ? gate.passed : false };
+  return { plan, runs, gate, gateError, haltedAfterWave, skipped, passed: gate ? gate.passed : false };
 }
 function safeCheck(root, shard) {
   try {
@@ -8594,12 +8602,13 @@ function buildShardPrompt(root, shard, options = {}) {
   const entry = manifest.shards[shard];
   if (!entry) throw new Error(`unknown shard: ${shard}`);
   const shardDir = join13(root, entry.dir);
+  const contractVersion = loadContract(root).version;
   const charterPath = join13(shardDir, "SHARD.md");
   const charter = existsSync9(charterPath) ? readFileSync7(charterPath, "utf8").trim() : "(this shard has no SHARD.md - treat the slices above as the whole charter)";
   return [
     `You are the \`${shard}\` shard in a sharding workspace.`,
     "",
-    `The contract is frozen at version ${manifest.contractVersion}. You may read it, and you may never write it.`,
+    `The contract is frozen at version ${contractVersion}. You may read it, and you may never write it.`,
     `Your surface adapter is \`${entry.adapter}\`.`,
     "",
     "You PROVIDE these contract slices. Each one must be declared in your own surface:",
@@ -8614,7 +8623,12 @@ function buildShardPrompt(root, shard, options = {}) {
     "---",
     "",
     "Working rules:",
-    "- Work only inside this directory. Do not read or write any sibling shard, and do not write the contract. A PreToolUse hook enforces this and will deny the call.",
+    // Deliberately stated as a rule the session must keep, not as a mechanism
+    // it can rely on. The PreToolUse hook only exists when the sharding plugin
+    // is installed for whoever spawned this session, and the engine is
+    // documented as usable without the plugin - so promising enforcement would
+    // be false exactly where it matters most.
+    "- Work only inside this directory. Do not read or write any sibling shard, and do not write the contract. Where the sharding plugin is installed a PreToolUse hook denies these outright; treat the rule as binding either way.",
     "- Your DECLARED surface is what the gate measures. Implementation with no matching surface file reads as drift, and so does a surface file with nothing behind it.",
     "- Check yourself at any point with the `/sharding:shard-check` command.",
     "- Your exit code is not the verdict. The conductor re-reads your surface from disk after you stop, so finishing early with a drifted surface fails the phase just the same.",
@@ -8622,20 +8636,28 @@ function buildShardPrompt(root, shard, options = {}) {
     ""
   ].join("\n");
 }
-function claudeSessionArgs(prompt, root, options = {}) {
+function claudeSessionArgs(root, options = {}) {
   const args = [
-    "--print",
-    "--permission-mode",
-    options.permissionMode ?? "acceptEdits",
     // The contract lives above the session's cwd, so it has to be granted
     // explicitly. Granting the contract directory alone, rather than the
     // workspace root, is what keeps sibling shards out of reach.
+    //
+    // `--add-dir` is variadic (`<directories...>`), so it must never be the
+    // last flag before a positional: commander happily reads the next token as
+    // a second directory. This is not hypothetical - the prompt used to be
+    // passed as a trailing argument, and `--add-dir <dir> <prompt>` swallowed
+    // it whole, so every session exited immediately with "Input must be
+    // provided either through stdin or as a prompt argument". Keeping a flag
+    // directly after it is defence in depth; the prompt going over stdin (see
+    // below) is what actually removes the hazard.
     "--add-dir",
-    join13(root, "contract")
+    join13(root, "contract"),
+    "--permission-mode",
+    options.permissionMode ?? "acceptEdits",
+    "--print"
   ];
   if (options.model) args.push("--model", options.model);
   args.push(...options.extraArgs ?? []);
-  args.push(prompt);
   return args;
 }
 function claudeSessionDispatcher(options = {}) {
@@ -8648,20 +8670,31 @@ function claudeSessionDispatcher(options = {}) {
     });
     return spawnDispatcher(
       options.bin ?? "claude",
-      claudeSessionArgs(prompt, ctx.root, options),
-      ctx.shardDir
+      claudeSessionArgs(ctx.root, options),
+      ctx.shardDir,
+      prompt
     );
   };
 }
 
 // src/cli.ts
 import { join as join14 } from "node:path";
+var PERMISSION_MODES = ["acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"];
 function sessionOptions(f) {
+  for (const key of ["session-bin", "session-model", "session-permission-mode", "session-task"]) {
+    if (f[key] === "true") return { error: `--${key} needs a value` };
+  }
+  const mode = f["session-permission-mode"];
+  if (mode && !PERMISSION_MODES.includes(mode)) {
+    return { error: `unknown permission mode: ${mode} (known: ${PERMISSION_MODES.join(", ")})` };
+  }
   return {
-    bin: f["session-bin"],
-    model: f["session-model"],
-    permissionMode: f["session-permission-mode"],
-    task: f["session-task"]
+    options: {
+      bin: f["session-bin"],
+      model: f["session-model"],
+      permissionMode: mode,
+      task: f["session-task"]
+    }
   };
 }
 function parseArgs(argv) {
@@ -8757,20 +8790,23 @@ function run(argv, cwd) {
       const shards = named ? [named] : planPhase(root).waves.flatMap((w) => w.shards);
       const unknown = shards.find((s) => !manifest.shards[s]);
       if (unknown) return { code: 2, stdout: j({ error: `unknown shard: ${unknown}` }) };
-      const options = sessionOptions(f);
+      const parsed = sessionOptions(f);
+      if ("error" in parsed) return { code: 2, stdout: j({ error: parsed.error }) };
+      const options = parsed.options;
       return {
         code: 0,
         stdout: j({
           bin: options.bin ?? "claude",
-          sessions: shards.map((shard) => {
-            const prompt = buildShardPrompt(root, shard, { manifest, task: options.task });
-            return {
-              shard,
-              cwd: join14(root, manifest.shards[shard].dir),
-              args: claudeSessionArgs(prompt, root, options),
-              prompt
-            };
-          })
+          // The prompt is fed on stdin, not argv, so it is reported separately
+          // rather than being buried at the end of `args`. Showing it as an
+          // argument would misrepresent the invocation being approved.
+          promptDelivery: "stdin",
+          args: claudeSessionArgs(root, options),
+          sessions: shards.map((shard) => ({
+            shard,
+            cwd: join14(root, manifest.shards[shard].dir),
+            prompt: buildShardPrompt(root, shard, { manifest, task: options.task })
+          }))
         })
       };
     }
@@ -8794,8 +8830,10 @@ async function runAsync(argv, cwd) {
   if (preset && preset !== "claude") {
     return { code: 2, stdout: j({ error: `unknown session preset: ${preset} (known: claude)` }) };
   }
+  const parsed = sessionOptions(f);
+  if ("error" in parsed) return { code: 2, stdout: j({ error: parsed.error }) };
   let dispatch;
-  if (preset) dispatch = claudeSessionDispatcher(sessionOptions(f));
+  if (preset) dispatch = claudeSessionDispatcher(parsed.options);
   else if (f["session-cmd"]) dispatch = commandDispatcher(f["session-cmd"]);
   const result = await orchestrate(root, {
     dispatch,

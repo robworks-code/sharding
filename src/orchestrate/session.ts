@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { getAdapter, type SurfaceRole } from "../adapters/index";
+import { loadContract } from "../contract/model";
 import { loadManifest, type Manifest } from "../manifest/model";
 import { spawnDispatcher, type Dispatcher } from "./run";
 
@@ -89,6 +90,13 @@ export function buildShardPrompt(
   const entry = manifest.shards[shard];
   if (!entry) throw new Error(`unknown shard: ${shard}`);
   const shardDir = join(root, entry.dir);
+  // The frozen version is `contract/VERSION`, NOT the manifest's
+  // `contractVersion` - that field is only the acknowledgment baseline for
+  // shards that have never acked (see shardCheck). `/shard-contract` bumps
+  // VERSION without touching the manifest, so using the manifest here told
+  // every session the old version at exactly the moment a bump made re-aligning
+  // shards the reason to dispatch them.
+  const contractVersion = loadContract(root).version;
 
   const charterPath = join(shardDir, "SHARD.md");
   const charter = existsSync(charterPath)
@@ -98,7 +106,7 @@ export function buildShardPrompt(
   return [
     `You are the \`${shard}\` shard in a sharding workspace.`,
     "",
-    `The contract is frozen at version ${manifest.contractVersion}. You may read it, and you may never write it.`,
+    `The contract is frozen at version ${contractVersion}. You may read it, and you may never write it.`,
     `Your surface adapter is \`${entry.adapter}\`.`,
     "",
     "You PROVIDE these contract slices. Each one must be declared in your own surface:",
@@ -113,7 +121,12 @@ export function buildShardPrompt(
     "---",
     "",
     "Working rules:",
-    "- Work only inside this directory. Do not read or write any sibling shard, and do not write the contract. A PreToolUse hook enforces this and will deny the call.",
+    // Deliberately stated as a rule the session must keep, not as a mechanism
+    // it can rely on. The PreToolUse hook only exists when the sharding plugin
+    // is installed for whoever spawned this session, and the engine is
+    // documented as usable without the plugin - so promising enforcement would
+    // be false exactly where it matters most.
+    "- Work only inside this directory. Do not read or write any sibling shard, and do not write the contract. Where the sharding plugin is installed a PreToolUse hook denies these outright; treat the rule as binding either way.",
     "- Your DECLARED surface is what the gate measures. Implementation with no matching surface file reads as drift, and so does a surface file with nothing behind it.",
     "- Check yourself at any point with the `/sharding:shard-check` command.",
     "- Your exit code is not the verdict. The conductor re-reads your surface from disk after you stop, so finishing early with a drifted surface fails the phase just the same.",
@@ -127,29 +140,43 @@ export function buildShardPrompt(
  * and `/shard-orchestrate`, when it shows the user what it is about to run -
  * can inspect the exact invocation without spawning anything.
  */
-export function claudeSessionArgs(prompt: string, root: string, options: ShardSessionOptions = {}): string[] {
+export function claudeSessionArgs(root: string, options: ShardSessionOptions = {}): string[] {
   const args = [
-    "--print",
-    "--permission-mode",
-    options.permissionMode ?? "acceptEdits",
     // The contract lives above the session's cwd, so it has to be granted
     // explicitly. Granting the contract directory alone, rather than the
     // workspace root, is what keeps sibling shards out of reach.
+    //
+    // `--add-dir` is variadic (`<directories...>`), so it must never be the
+    // last flag before a positional: commander happily reads the next token as
+    // a second directory. This is not hypothetical - the prompt used to be
+    // passed as a trailing argument, and `--add-dir <dir> <prompt>` swallowed
+    // it whole, so every session exited immediately with "Input must be
+    // provided either through stdin or as a prompt argument". Keeping a flag
+    // directly after it is defence in depth; the prompt going over stdin (see
+    // below) is what actually removes the hazard.
     "--add-dir",
     join(root, "contract"),
+    "--permission-mode",
+    options.permissionMode ?? "acceptEdits",
+    "--print",
   ];
   if (options.model) args.push("--model", options.model);
   args.push(...(options.extraArgs ?? []));
-  args.push(prompt);
   return args;
 }
 
 /**
  * A dispatcher that runs one headless Claude Code session per shard.
  *
- * Note the argv is passed as an array with no shell: a generated prompt is
- * multi-line free text containing quotes and backticks, and interpolating that
- * into a shell string is how a prompt turns into a command.
+ * The prompt goes over STDIN, not argv, and that is the whole point of this
+ * function's shape. A generated prompt is multi-line free text full of quotes,
+ * backticks and `->` arrows; as a trailing positional it is at the mercy of
+ * every variadic flag in front of it, and joining it into a shell string turns
+ * its arrows into output redirections. Over stdin it is data, and no argument
+ * parser or shell can reinterpret it.
+ *
+ * The argv that remains is passed as an array with no shell for the same
+ * reason.
  */
 export function claudeSessionDispatcher(options: ShardSessionOptions = {}): Dispatcher {
   const manifests = new Map<string, Manifest>();
@@ -161,8 +188,9 @@ export function claudeSessionDispatcher(options: ShardSessionOptions = {}): Disp
     });
     return spawnDispatcher(
       options.bin ?? "claude",
-      claudeSessionArgs(prompt, ctx.root, options),
+      claudeSessionArgs(ctx.root, options),
       ctx.shardDir,
+      prompt,
     );
   };
 }

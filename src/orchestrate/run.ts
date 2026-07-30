@@ -37,11 +37,17 @@ export interface OrchestrationResult {
   /** Set when the gate itself could not run - never a pass. */
   gateError?: string;
   /**
-   * Set when dispatch stopped early because a wave left a shard unclean. The
-   * waves after this index were never dispatched, so their shards' verdicts
-   * describe whatever was already on disk.
+   * The index of the wave after which dispatch stopped, because it left a shard
+   * unclean. Note this is 0 for a first-wave halt, so it must be tested for
+   * presence, never truthiness.
    */
   haltedAfterWave?: number;
+  /**
+   * Shards in the waves that were never dispatched. They have no `ShardRun`
+   * entry at all - there is no run to describe - so they are named here rather
+   * than left for a reader to work out by subtracting `runs` from `plan`.
+   */
+  skipped?: string[];
   passed: boolean;
 }
 
@@ -77,22 +83,31 @@ export function spawnDispatcher(
   bin: string,
   args: string[],
   shardDir: string,
+  stdin?: string,
 ): Promise<{ exitCode: number | null; output: string }> {
-  return spawnProcess(bin, args, shardDir);
+  return spawnProcess(bin, args, shardDir, stdin);
 }
 
 function spawnProcess(
   command: string,
   args: string[] | undefined,
   shardDir: string,
+  stdin?: string,
 ): Promise<{ exitCode: number | null; output: string }> {
   return new Promise((resolve) => {
+    const stdio: ["pipe" | "ignore", "pipe", "pipe"] = [stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"];
     const child = args
-      ? spawn(command, args, { cwd: shardDir, stdio: ["ignore", "pipe", "pipe"] })
-      : spawn(command, { cwd: shardDir, shell: true, stdio: ["ignore", "pipe", "pipe"] });
+      ? spawn(command, args, { cwd: shardDir, stdio })
+      : spawn(command, { cwd: shardDir, shell: true, stdio });
+    if (stdin !== undefined && child.stdin) {
+      // Closing stdin matters as much as writing it: a `--print` session reads
+      // to EOF, so leaving the pipe open hangs the wave forever.
+      child.stdin.on("error", () => {});
+      child.stdin.end(stdin);
+    }
     let output = "";
-    child.stdout.on("data", (d) => (output += d));
-    child.stderr.on("data", (d) => (output += d));
+    child.stdout?.on("data", (d) => (output += d));
+    child.stderr?.on("data", (d) => (output += d));
     child.on("error", (e) => resolve({ exitCode: null, output: output + String(e.message) }));
     child.on("close", (exitCode) => resolve({ exitCode, output }));
   });
@@ -124,6 +139,7 @@ export async function orchestrate(
   const manifest = loadManifest(root);
   const runs: ShardRun[] = [];
   let haltedAfterWave: number | undefined;
+  let skipped: string[] | undefined;
 
   if (options.dispatch) {
     for (const wave of plan.waves) {
@@ -166,6 +182,7 @@ export async function orchestrate(
       // session that exited 0 having drifted very much is.
       if (options.haltOnWaveFailure && results.some((r) => r.check?.clean !== true)) {
         haltedAfterWave = wave.index;
+        skipped = plan.waves.filter((w) => w.index > wave.index).flatMap((w) => w.shards);
         break;
       }
     }
@@ -184,7 +201,7 @@ export async function orchestrate(
       gateError = String(e?.message ?? e);
     }
   }
-  return { plan, runs, gate, gateError, haltedAfterWave, passed: gate ? gate.passed : false };
+  return { plan, runs, gate, gateError, haltedAfterWave, skipped, passed: gate ? gate.passed : false };
 }
 
 /**

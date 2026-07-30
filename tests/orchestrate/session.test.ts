@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterAll, describe, it, expect } from "vitest";
 import { chmodSync, cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
@@ -23,7 +23,9 @@ function multistack(): string {
   return dst;
 }
 
+/** A shared read-only copy for the tests that never write to it. */
 const MULTISTACK = multistack();
+afterAll(() => rmSync(MULTISTACK, { recursive: true, force: true }));
 
 /** Every shard surface file in the workspace, keyed by path, as raw bytes. */
 function surfaceBytes(root: string): Map<string, string> {
@@ -48,22 +50,34 @@ function surfaceBytes(root: string): Map<string, string> {
  * session is neither hermetic nor free, and the behaviour under test is the
  * invocation, which the stub captures exactly.
  */
-function argvRecorder(): { bin: string; readArgv: () => string[][]; cleanup: () => void } {
+interface Invocation {
+  argv: string[];
+  stdin: string;
+}
+
+function argvRecorder(): { bin: string; readCalls: () => Invocation[]; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "stub-claude-"));
-  const log = join(dir, "argv.jsonl");
+  const log = join(dir, "calls.jsonl");
   const bin = join(dir, "claude-stub");
   writeFileSync(
     bin,
+    // Reads stdin to EOF, which is also what a real \`--print\` session does -
+    // so a dispatcher that forgets to close the pipe hangs this stub too,
+    // rather than passing and hanging only in production.
     `#!/usr/bin/env node
 const { appendFileSync } = require("node:fs");
-appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2)) + "\\n");
-process.exit(0);
+let stdin = "";
+process.stdin.on("data", (d) => (stdin += d));
+process.stdin.on("end", () => {
+  appendFileSync(${JSON.stringify(log)}, JSON.stringify({ argv: process.argv.slice(2), stdin }) + "\\n");
+  process.exit(0);
+});
 `,
   );
   chmodSync(bin, 0o755);
   return {
     bin,
-    readArgv: () =>
+    readCalls: () =>
       readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)),
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
@@ -119,11 +133,34 @@ describe("buildShardPrompt", () => {
   it("rejects a shard that is not in the manifest", () => {
     expect(() => buildShardPrompt(MULTISTACK, "nope")).toThrow(/unknown shard: nope/);
   });
+
+  it("reports the frozen contract version, not the manifest's ack baseline", () => {
+    // `/shard-contract` bumps contract/VERSION and leaves the manifest's
+    // contractVersion alone - that field is only the baseline for shards that
+    // have never acked. Reading it here told every session the OLD version at
+    // exactly the moment a bump made re-aligning shards the reason to dispatch.
+    const root = multistack();
+    try {
+      writeFileSync(join(root, "contract", "VERSION"), "v2\n");
+      const prompt = buildShardPrompt(root, "catalog");
+      expect(prompt).toContain("frozen at version v2");
+      expect(prompt).not.toContain("frozen at version v1");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
+
+/**
+ * Flags the installed Claude Code CLI declares as variadic (`<x...>`). A
+ * variadic flag keeps consuming tokens until the next `--flag`, so anything
+ * that follows one and is not itself a flag gets eaten.
+ */
+const VARIADIC = ["--add-dir", "--mcp-config", "--plugin-dir", "--plugin-url", "--file", "--betas"];
 
 describe("claudeSessionArgs", () => {
   it("runs headless and grants the contract directory", () => {
-    const args = claudeSessionArgs("PROMPT", "/ws");
+    const args = claudeSessionArgs("/ws");
     expect(args).toContain("--print");
     // Without this the session starts in shards/<name>/ and cannot read the
     // contract it is being measured against.
@@ -131,39 +168,65 @@ describe("claudeSessionArgs", () => {
       "--add-dir",
       join("/ws", "contract"),
     ]);
-    expect(args.at(-1)).toBe("PROMPT");
+  });
+
+  it("passes no positional argument at all", () => {
+    // The guard for the bug that made the whole preset a no-op. The prompt used
+    // to be a trailing positional; `--add-dir` is variadic, so commander read
+    // it as a second directory and every session exited with "Input must be
+    // provided either through stdin or as a prompt argument". Reproduced
+    // against the real binary. With the prompt on stdin there is no positional
+    // left for any flag to swallow, and this asserts that structurally.
+    for (const options of [{}, { model: "opus" }, { extraArgs: ["--verbose"] }]) {
+      const args = claudeSessionArgs("/ws", options);
+      const positionals = args.filter((a, i) => !a.startsWith("--") && !args[i - 1]?.startsWith("--"));
+      expect(positionals).toEqual([]);
+    }
+  });
+
+  it("never leaves a variadic flag's value at the end of the argv", () => {
+    // Defence in depth behind the rule above: even a value that legitimately
+    // follows a variadic flag must be followed by another flag, or a future
+    // trailing argument would silently join it.
+    for (const options of [{}, { model: "opus" }, { extraArgs: ["--verbose"] }]) {
+      const args = claudeSessionArgs("/ws", options);
+      for (const flag of VARIADIC) {
+        const i = args.indexOf(flag);
+        if (i === -1) continue;
+        const after = args.slice(i + 1).findIndex((a) => a.startsWith("--"));
+        expect(after, `${flag} is not followed by another flag in ${JSON.stringify(args)}`).toBeGreaterThan(-1);
+      }
+    }
   });
 
   it("grants the contract directory only, not the workspace root", () => {
     // Granting the root would hand the session every sibling shard.
-    const args = claudeSessionArgs("PROMPT", "/ws");
-    expect(args).not.toContain("/ws");
+    expect(claudeSessionArgs("/ws")).not.toContain("/ws");
   });
 
   it("defaults to acceptEdits and honors an override", () => {
-    expect(claudeSessionArgs("P", "/ws")).toContain("acceptEdits");
-    expect(claudeSessionArgs("P", "/ws", { permissionMode: "bypassPermissions" })).toContain(
+    expect(claudeSessionArgs("/ws")).toContain("acceptEdits");
+    expect(claudeSessionArgs("/ws", { permissionMode: "bypassPermissions" })).toContain(
       "bypassPermissions",
     );
-    expect(claudeSessionArgs("P", "/ws", { permissionMode: "bypassPermissions" })).not.toContain(
+    expect(claudeSessionArgs("/ws", { permissionMode: "bypassPermissions" })).not.toContain(
       "acceptEdits",
     );
   });
 
-  it("passes a model and extra args through, keeping the prompt last", () => {
-    const args = claudeSessionArgs("P", "/ws", { model: "opus", extraArgs: ["--verbose"] });
+  it("passes a model and extra args through", () => {
+    const args = claudeSessionArgs("/ws", { model: "opus", extraArgs: ["--verbose"] });
     expect(args).toContain("--model");
     expect(args[args.indexOf("--model") + 1]).toBe("opus");
     expect(args).toContain("--verbose");
-    expect(args.at(-1)).toBe("P");
   });
 });
 
 describe("claudeSessionDispatcher", () => {
-  it("hands the prompt over as a single argument, with no shell in between", async () => {
-    // The prompt is generated multi-line text containing backticks and quotes.
-    // Interpolated into a shell string it stops being an argument, so this
-    // asserts the argv array reaches the binary intact.
+  it("delivers each shard's prompt over stdin, intact", async () => {
+    // The prompt is generated multi-line text containing backticks, quotes and
+    // `->` arrows. On stdin it is data: no argument parser and no shell can
+    // reinterpret it, which is what both prior bugs here came down to.
     const root = multistack();
     const stub = argvRecorder();
     try {
@@ -173,16 +236,16 @@ describe("claudeSessionDispatcher", () => {
       });
       expect(result.runs).toHaveLength(5);
 
-      const calls = stub.readArgv();
+      const calls = stub.readCalls();
       expect(calls).toHaveLength(5);
-      for (const argv of calls) {
-        expect(argv[0]).toBe("--print");
-        const prompt = argv.at(-1)!;
-        expect(prompt).toContain("You are the `");
-        expect(prompt).toContain("\n");
-        expect(prompt).toContain("Working rules:");
+      for (const { argv, stdin } of calls) {
+        expect(argv).not.toContain(stdin);
+        expect(stdin).toContain("You are the `");
+        expect(stdin).toContain("\n");
+        expect(stdin).toContain("Working rules:");
       }
-      expect(new Set(calls.map((a) => a.at(-1)))).toHaveProperty("size", 5);
+      // One distinct prompt per shard, not the same one five times.
+      expect(new Set(calls.map((c) => c.stdin))).toHaveProperty("size", 5);
     } finally {
       stub.cleanup();
       rmSync(root, { recursive: true, force: true });
@@ -267,6 +330,25 @@ describe("haltOnWaveFailure", () => {
     expect(dispatched).toEqual(["alpha"]);
     expect(result.haltedAfterWave).toBe(0);
     expect(result.runs.map((r) => r.shard)).toEqual(["alpha"]);
+    // A shard that never ran has no ShardRun at all, so it has to be named
+    // somewhere or a reader has to subtract `runs` from `plan` to find it.
+    expect(result.skipped).toEqual(["beta"]);
+  });
+
+  it("reports a first-wave halt as index 0, which must not be read as falsy", async () => {
+    // `haltedAfterWave === 0` is the most common halt. Anything testing it for
+    // truthiness silently reports the run as having completed.
+    const root = graphWithBrokenProvider();
+    const result = await orchestrate(root, {
+      haltOnWaveFailure: true,
+      skipGate: true,
+      dispatch: async ({ shard, shardDir }) => {
+        if (shard === "alpha") rmSync(join(shardDir, "surface", "A.json"));
+        return { exitCode: 0, output: "" };
+      },
+    });
+    expect(result.haltedAfterWave).toBe(0);
+    expect("haltedAfterWave" in result).toBe(true);
   });
 
   it("keeps going by default, so one bad wave does not hide the rest", async () => {
@@ -283,6 +365,7 @@ describe("haltOnWaveFailure", () => {
 
     expect(dispatched.sort()).toEqual(["alpha", "beta"]);
     expect(result.haltedAfterWave).toBeUndefined();
+    expect(result.skipped).toBeUndefined();
   });
 
   it("halts on drift, not on exit status", async () => {
@@ -335,9 +418,10 @@ describe("cli session wiring", () => {
         root,
       );
       expect(JSON.parse(stdout).runs).toHaveLength(5);
-      const calls = stub.readArgv();
+      const calls = stub.readCalls();
       expect(calls).toHaveLength(5);
-      expect(calls[0]).toContain("--print");
+      expect(calls[0].argv).toContain("--print");
+      expect(calls[0].stdin).toContain("You are the `");
     } finally {
       stub.cleanup();
       rmSync(root, { recursive: true, force: true });
@@ -359,6 +443,10 @@ describe("cli session wiring", () => {
     expect(code).toBe(0);
     const preview = JSON.parse(stdout);
     expect(preview.bin).toBe("claude");
+    // The prompt is not an argument any more, and the preview must not imply
+    // it is - the user approves what will actually run.
+    expect(preview.promptDelivery).toBe("stdin");
+    expect(preview.args).toContain("--print");
     expect(preview.sessions.map((s: any) => s.shard).sort()).toEqual([
       "catalog",
       "checkout",
@@ -378,7 +466,25 @@ describe("cli session wiring", () => {
     const preview = JSON.parse(stdout);
     expect(preview.sessions).toHaveLength(1);
     expect(preview.sessions[0].shard).toBe("checkout");
-    expect(preview.sessions[0].args).toContain("opus");
+    expect(preview.args).toContain("opus");
+  });
+
+  it("rejects a session flag written without a value", () => {
+    // `--session-model` alone parses to the literal "true", which would spawn
+    // `claude --model true` once per shard and surface only as N dead sessions.
+    const { code, stdout } = run(["session-preview", "--session-model"], MULTISTACK);
+    expect(code).toBe(2);
+    expect(JSON.parse(stdout).error).toMatch(/--session-model needs a value/);
+  });
+
+  it("rejects a permission mode the binary does not accept", () => {
+    const { code, stdout } = run(
+      ["session-preview", "--session-permission-mode", "yolo"],
+      MULTISTACK,
+    );
+    expect(code).toBe(2);
+    expect(JSON.parse(stdout).error).toMatch(/unknown permission mode: yolo/);
+    expect(run(["session-preview", "--session-permission-mode", "bypassPermissions"], MULTISTACK).code).toBe(0);
   });
 
   it("names an unknown shard instead of previewing nothing", () => {
