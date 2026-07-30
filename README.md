@@ -92,13 +92,15 @@ Three mechanisms enforce the boundaries:
 - `src/` - the deterministic engine (TypeScript, no framework):
   - `surface/` - the canonical shape model and the single structural differ
   - `contract/`, `manifest/` - loaders for the on-disk truth
-  - `adapters/` - pluggable per-stack surface extraction (identity + jsonschema)
+  - `adapters/` - pluggable per-stack surface extraction (identity, jsonschema, dts, openapi, protobuf)
   - `conventions/`, `isolation/`, `check/` - convention linting, sandbox checks, per-shard check, status + blast radius, and the phase gate
+  - `orchestrate/` - wave planning over the shard graph, and the dispatcher that drives a session per shard
   - `cli.ts` - a pure, testable dispatch over every engine operation
 - `hooks/`, `commands/`, `skills/`, `.claude-plugin/` - the Claude Code plugin surface (SessionStart / PreToolUse / Stop hooks, the `/shard-*` commands, and the sharding skill)
 - `examples/demo/` - a two-shard demo (`orders` provides an Order API; `gateway` consumes it) whose end-to-end test drives the real engine
 - `tests/` - the test suite (87 tests across 18 files)
 - `docs/design.md` - the design spec: premise, scope decisions, and the mechanism in full
+- `docs/surface-format.md` - the canonical `{slice, symbols}` surface format, the finding kinds, and how each adapter reads a shard's surface
 
 ## The plugin commands
 
@@ -113,6 +115,8 @@ Used from inside Claude Code once the plugin is installed. When installed as a p
 | `/shard-ack` | shard | Acknowledge this shard against the current contract version, after reviewing what the bump changed. Records into the shard's own directory. |
 | `/shard-phase-check` | anywhere | The gate: run `/shard-check` across all participating shards plus the phase's acceptance suite. |
 | `/shard-status` | anywhere | Print the graph: shards, phase, per-shard drift, contract version, blast radius of a change. |
+| `/shard-plan` | anywhere | Order the current phase's shards into parallel waves, and flag slices nothing in the phase provides. Read-only. |
+| `/shard-orchestrate` | root | Drive a session per shard, wave by wave, then run the gate. Dispatches nothing unless given a session command. Conductor-only. |
 | `/feedback` | anywhere | Send a bug, idea, or drift-check correction to the maintainer's support queue as a ticket, without leaving the session. Shows the exact payload and confirms before sending. |
 
 ## The engine directly (no plugin)
@@ -125,8 +129,22 @@ npm install
 npm run cli -- check [shard]      # diff one shard's surface against the contract
 npm run cli -- status             # graph + per-shard state + blast radius + stale shards
 npm run cli -- phase-check        # the phase gate
+npm run cli -- plan               # the phase's shards, ordered into parallel waves
+npm run cli -- orchestrate        # drive a session per shard, then run the gate
 npm run cli -- orient --dir <d>   # is this dir a shard or the conductor?
 ```
+
+### Orchestration
+
+`plan` orders the current phase's shards into waves: a shard waits for whatever provides the slices it consumes, and everything within a wave is independent by construction. `orchestrate` executes that plan, running each wave's shards concurrently with the working directory set to `shards/<name>/` - which is what makes each one a shard session, since every hook and command already derives its role from where it is.
+
+```bash
+npm run cli -- orchestrate                            # plan + gate, dispatch nothing
+npm run cli -- orchestrate --session-cmd '<command>'  # actually drive a session per shard
+npm run cli -- orchestrate --skip-gate                # dispatch without closing the phase
+```
+
+Dispatching is opt-in because spawning sessions is the one irreversible thing here. A dispatched session's exit code is reported but never substitutes for the verdict: whether a shard is clean is re-read from disk after it runs, so a session that exits 0 having drifted is still reported as drifted.
 
 Every command finds the workspace from the working directory, so they run from the
 conductor root, from inside a shard, or from any directory under either. `check` with
@@ -146,16 +164,31 @@ Each command exits non-zero when it finds drift or a failing gate, so it drops s
 
 ```bash
 npm install
+npm run verify    # the gate: typecheck, build, test
+npm run prepush   # verify, plus "is the committed bundle the one src builds?"
+```
+
+Or individually:
+
+```bash
 npm test          # vitest run - full suite
 npm run typecheck # tsc --noEmit
 npm run build     # bundle src/cli.ts -> dist/cli.mjs (self-contained)
 ```
 
-The only runtime dependency is `yaml`; everything else is dev tooling.
+`npm run verify` is the single local command that proves a change. The only runtime dependency is `yaml`; everything else is dev tooling.
 
 ### The bundled CLI
 
 The plugin's hooks and commands invoke `node ${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs`, a single self-contained bundle (esbuild, `yaml` inlined). Claude Code installs a plugin by copying it to a cache with no `node_modules`, so the engine must not depend on installed packages at run time - hence the bundle, which is committed. **Re-run `npm run build` after changing anything under `src/`,** or the installed plugin will run stale logic.
+
+Two guards make forgetting that a failure rather than a silent bug. `npm test` rebuilds the bundle to a scratch path and byte-compares it against the committed one, so a stale `dist/` fails in any checkout. And `npm run prepush` fails if `dist/` differs from `HEAD` after a rebuild - the bundle other people would run is not the one this source builds. Wire it up with:
+
+```bash
+printf '#!/bin/sh\nnpm run prepush\n' > .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+```
+
+The `dts` adapter is the one piece deliberately left out of the bundle - it resolves TypeScript from the *shard's* own `node_modules` at run time, so the compiler never ships inside a plugin cache.
 
 ## Installing
 

@@ -10,4 +10,6 @@ Create and register shard `$1`.
    - `CLAUDE.md` - reminder that this session may read only this directory and read-only `contract/`, and couples to others solely through the contract.
    - `surface/` (empty) for its declared provided surface, and `surface/consumed/` for snapshots of consumed slices.
 2. Add an entry under `shards:` in `.sharding/manifest.yaml`: `dir: shards/$1`, `adapter: <project default or chosen>`, `provides: [...]`, `consumes: [...]`.
+
+   The adapter defaults to the project's, but a shard on a different stack may override it - `identity`, `jsonschema`, `dts`, `openapi`, or `protobuf`. It governs both what this shard provides and what it consumes; see `docs/surface-format.md` for the filename each one expects.
 3. Remind the user to open a fresh session inside `shards/$1/` to build it.
