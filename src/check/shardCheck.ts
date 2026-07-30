@@ -1,12 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { loadContract } from "../contract/model";
 import { loadManifest } from "../manifest/model";
 import { readAck } from "../shard/ack";
-import { getAdapter } from "../adapters/index";
+import { extractSurface, getAdapter, surfaceExists } from "../adapters/index";
 import { diffSurface } from "../surface/diff";
 import { lintConventions, type ConventionRules } from "../conventions/lint";
-import type { Finding, StructuralSurface } from "../surface/types";
+import type { Finding } from "../surface/types";
 
 export interface ShardCheckResult {
   shard: string;
@@ -36,11 +36,15 @@ export function checkShard(root: string, shardName: string): ShardCheckResult {
       findings.push({ slice, kind: "missing-symbol", location: slice });
       continue;
     }
-    if (!adapter.exists(shardDir, slice)) {
-      findings.push({ slice, kind: "missing-symbol", location: `${slice} (no provided surface)` });
+    if (!surfaceExists(adapter, shardDir, slice, "provided")) {
+      findings.push({
+        slice,
+        kind: "missing-symbol",
+        location: `${slice} (no provided surface at ${relative(root, adapter.locate(shardDir, slice, "provided"))})`,
+      });
       continue;
     }
-    const extracted = adapter.extract(shardDir, slice);
+    const extracted = extractSurface(adapter, shardDir, slice, "provided");
     findings.push(...diffSurface(expected, extracted));
     findings.push(...lintConventions(extracted, rules));
   }
@@ -51,12 +55,18 @@ export function checkShard(root: string, shardName: string): ShardCheckResult {
       findings.push({ slice, kind: "missing-symbol", location: slice });
       continue;
     }
-    const snapPath = join(shardDir, "surface", "consumed", `${slice}.json`);
-    if (!existsSync(snapPath)) {
-      findings.push({ slice, kind: "missing-symbol", location: `${slice} (no consumed snapshot)` });
+    // Read through the adapter, not a hardcoded path: a shard declares what it
+    // consumes in the same terms it declares what it provides. Hardcoding the
+    // identity layout here made a jsonschema shard write two different formats.
+    if (!surfaceExists(adapter, shardDir, slice, "consumed")) {
+      findings.push({
+        slice,
+        kind: "missing-symbol",
+        location: `${slice} (no consumed snapshot at ${relative(root, adapter.locate(shardDir, slice, "consumed"))})`,
+      });
       continue;
     }
-    const snapshot = JSON.parse(readFileSync(snapPath, "utf8")) as StructuralSurface;
+    const snapshot = extractSurface(adapter, shardDir, slice, "consumed");
     findings.push(...diffSurface(expected, snapshot));
   }
 

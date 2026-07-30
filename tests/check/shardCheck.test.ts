@@ -36,7 +36,13 @@ describe("checkShard", () => {
     // No surface/Order.json written - the shard hasn't been built yet.
     const result = checkShard(root, "orders");
     expect(result.clean).toBe(false);
-    expect(result.findings).toContainEqual({ slice: "Order", kind: "missing-symbol", location: "Order (no provided surface)" });
+    // The finding names the path the adapter actually looked at, so the fix is
+    // "write this file" rather than "find out where it wanted the file".
+    expect(result.findings).toContainEqual({
+      slice: "Order",
+      kind: "missing-symbol",
+      location: "Order (no provided surface at shards/orders/surface/Order.json)",
+    });
   });
 
   it("reports drift when the declared surface diverges", () => {
