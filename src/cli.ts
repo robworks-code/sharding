@@ -8,6 +8,45 @@ import { isReadAllowed, isWriteAllowed } from "./isolation/sandbox";
 import { resolveRoot } from "./workspace/root";
 import { planPhase } from "./orchestrate/plan";
 import { commandDispatcher, orchestrate } from "./orchestrate/run";
+import {
+  buildShardPrompt,
+  claudeSessionArgs,
+  claudeSessionDispatcher,
+  type ShardSessionOptions,
+} from "./orchestrate/session";
+import { join } from "node:path";
+
+/** Permission modes the installed Claude Code CLI accepts. */
+const PERMISSION_MODES = ["acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"];
+
+/**
+ * The `--session-*` flags, shared by `orchestrate` and `session-preview`.
+ *
+ * Returns an error string rather than throwing, so both callers report it as
+ * JSON like everything else. A flag written without a value parses to the
+ * literal `"true"` - `--session-model` alone would otherwise spawn
+ * `claude --model true` once per shard, and the only symptom would be N failed
+ * sessions.
+ */
+function sessionOptions(
+  f: Record<string, string>,
+): { options: ShardSessionOptions } | { error: string } {
+  for (const key of ["session-bin", "session-model", "session-permission-mode", "session-task"]) {
+    if (f[key] === "true") return { error: `--${key} needs a value` };
+  }
+  const mode = f["session-permission-mode"];
+  if (mode && !PERMISSION_MODES.includes(mode)) {
+    return { error: `unknown permission mode: ${mode} (known: ${PERMISSION_MODES.join(", ")})` };
+  }
+  return {
+    options: {
+      bin: f["session-bin"],
+      model: f["session-model"],
+      permissionMode: mode,
+      task: f["session-task"],
+    },
+  };
+}
 
 /**
  * Parse `--key value`, `--key=value`, and bare boolean `--key`.
@@ -17,11 +56,15 @@ import { commandDispatcher, orchestrate } from "./orchestrate/run";
  * silently dropping the session command entirely, so the orchestrator spawned
  * nothing while still reporting a plan. Only one argument order worked.
  */
-function flags(argv: string[]): Record<string, string> {
+function parseArgs(argv: string[]): { flags: Record<string, string>; positionals: string[] } {
   const out: Record<string, string> = {};
+  const positionals: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (!arg.startsWith("--")) continue;
+    if (!arg.startsWith("--")) {
+      positionals.push(arg);
+      continue;
+    }
 
     const eq = arg.indexOf("=");
     if (eq !== -1) {
@@ -32,11 +75,18 @@ function flags(argv: string[]): Record<string, string> {
     if (next === undefined || next.startsWith("--")) {
       out[arg.slice(2)] = "true";
     } else {
+      // Consumed as this flag's value, so it is NOT a positional. Scanning for
+      // "the first argument without a leading --" independently of this loop
+      // would pick up `opus` from `--session-model opus <shard>`.
       out[arg.slice(2)] = next;
       i++;
     }
   }
-  return out;
+  return { flags: out, positionals };
+}
+
+function flags(argv: string[]): Record<string, string> {
+  return parseArgs(argv).flags;
 }
 
 /**
@@ -113,6 +163,37 @@ export function run(argv: string[], cwd: string): { code: number; stdout: string
       const plan = planPhase(root);
       return { code: 0, stdout: j(plan) };
     }
+    case "session-preview": {
+      // Spawning sessions is the one irreversible thing the engine does, so the
+      // exact invocation has to be inspectable before it runs - both for the
+      // user to approve and for a reviewer to see what a shard session is told.
+      const { flags: f, positionals } = parseArgs(rest);
+      const manifest = loadManifest(root);
+      const named = positionals[0];
+      const shards = named ? [named] : planPhase(root).waves.flatMap((w) => w.shards);
+      const unknown = shards.find((s) => !manifest.shards[s]);
+      if (unknown) return { code: 2, stdout: j({ error: `unknown shard: ${unknown}` }) };
+
+      const parsed = sessionOptions(f);
+      if ("error" in parsed) return { code: 2, stdout: j({ error: parsed.error }) };
+      const options = parsed.options;
+      return {
+        code: 0,
+        stdout: j({
+          bin: options.bin ?? "claude",
+          // The prompt is fed on stdin, not argv, so it is reported separately
+          // rather than being buried at the end of `args`. Showing it as an
+          // argument would misrepresent the invocation being approved.
+          promptDelivery: "stdin",
+          args: claudeSessionArgs(root, options),
+          sessions: shards.map((shard) => ({
+            shard,
+            cwd: join(root, manifest.shards[shard].dir),
+            prompt: buildShardPrompt(root, shard, { manifest, task: options.task }),
+          })),
+        }),
+      };
+    }
     default:
       return { code: 2, stdout: j({ error: `unknown command: ${cmd}` }) };
   }
@@ -134,12 +215,32 @@ export async function runAsync(argv: string[], cwd: string): Promise<{ code: num
   const root = resolveRoot(cwd);
   const f = flags(rest);
 
-  // Without --session-cmd the orchestrator plans and gates but dispatches
-  // nothing. That is the honest default: spawning sessions is the one
-  // irreversible thing here, so it happens only when explicitly asked for.
+  // Without --session-cmd or --session-preset the orchestrator plans and gates
+  // but dispatches nothing. That is the honest default: spawning sessions is
+  // the one irreversible thing here, so it happens only when explicitly asked
+  // for.
+  const preset = f["session-preset"];
+  if (preset && f["session-cmd"]) {
+    return {
+      code: 2,
+      stdout: j({ error: "--session-cmd and --session-preset are alternatives; pass one" }),
+    };
+  }
+  if (preset && preset !== "claude") {
+    return { code: 2, stdout: j({ error: `unknown session preset: ${preset} (known: claude)` }) };
+  }
+
+  const parsed = sessionOptions(f);
+  if ("error" in parsed) return { code: 2, stdout: j({ error: parsed.error }) };
+
+  let dispatch;
+  if (preset) dispatch = claudeSessionDispatcher(parsed.options);
+  else if (f["session-cmd"]) dispatch = commandDispatcher(f["session-cmd"]);
+
   const result = await orchestrate(root, {
-    dispatch: f["session-cmd"] ? commandDispatcher(f["session-cmd"]) : undefined,
+    dispatch,
     skipGate: "skip-gate" in f,
+    haltOnWaveFailure: "halt-on-wave-failure" in f,
   });
   return { code: result.passed ? 0 : 1, stdout: j(result) };
 }
