@@ -36,6 +36,12 @@ export interface OrchestrationResult {
   gate: PhaseCheckResult | null;
   /** Set when the gate itself could not run - never a pass. */
   gateError?: string;
+  /**
+   * Set when dispatch stopped early because a wave left a shard unclean. The
+   * waves after this index were never dispatched, so their shards' verdicts
+   * describe whatever was already on disk.
+   */
+  haltedAfterWave?: number;
   passed: boolean;
 }
 
@@ -54,15 +60,42 @@ export type Dispatcher = (ctx: {
  * the sandbox is not re-implemented, it is inherited.
  */
 export function commandDispatcher(command: string): Dispatcher {
-  return ({ shardDir }) =>
-    new Promise((resolve) => {
-      const child = spawn(command, { cwd: shardDir, shell: true, stdio: ["ignore", "pipe", "pipe"] });
-      let output = "";
-      child.stdout.on("data", (d) => (output += d));
-      child.stderr.on("data", (d) => (output += d));
-      child.on("error", (e) => resolve({ exitCode: null, output: output + String(e.message) }));
-      child.on("close", (exitCode) => resolve({ exitCode, output }));
-    });
+  // A user-supplied string is run through a shell on purpose: it is meant to be
+  // written the way it would be typed, pipes and all.
+  return ({ shardDir }) => spawnProcess(command, undefined, shardDir);
+}
+
+/**
+ * Spawn a binary with an explicit argv array and no shell.
+ *
+ * The preset dispatchers use this rather than `commandDispatcher`, because the
+ * arguments they build are generated - a multi-line prompt full of quotes and
+ * backticks - and pasting generated text into a shell string is how an argument
+ * stops being an argument.
+ */
+export function spawnDispatcher(
+  bin: string,
+  args: string[],
+  shardDir: string,
+): Promise<{ exitCode: number | null; output: string }> {
+  return spawnProcess(bin, args, shardDir);
+}
+
+function spawnProcess(
+  command: string,
+  args: string[] | undefined,
+  shardDir: string,
+): Promise<{ exitCode: number | null; output: string }> {
+  return new Promise((resolve) => {
+    const child = args
+      ? spawn(command, args, { cwd: shardDir, stdio: ["ignore", "pipe", "pipe"] })
+      : spawn(command, { cwd: shardDir, shell: true, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    child.stdout.on("data", (d) => (output += d));
+    child.stderr.on("data", (d) => (output += d));
+    child.on("error", (e) => resolve({ exitCode: null, output: output + String(e.message) }));
+    child.on("close", (exitCode) => resolve({ exitCode, output }));
+  });
 }
 
 export interface OrchestrateOptions {
@@ -70,6 +103,17 @@ export interface OrchestrateOptions {
   dispatch?: Dispatcher;
   /** Skip the phase gate (useful when dispatching a subset for inspection). */
   skipGate?: boolean;
+  /**
+   * Stop dispatching after a wave that left any of its shards unclean.
+   *
+   * Off by default, because a wave failing does not make the later waves
+   * meaningless - the shards are independent, and a run that surfaces every
+   * problem at once is usually more useful than one that stops at the first.
+   * It is worth turning on when sessions are expensive: a consumer dispatched
+   * against a provider that just failed is working from a slice that is not
+   * there yet.
+   */
+  haltOnWaveFailure?: boolean;
 }
 
 export async function orchestrate(
@@ -79,6 +123,7 @@ export async function orchestrate(
   const plan = planPhase(root);
   const manifest = loadManifest(root);
   const runs: ShardRun[] = [];
+  let haltedAfterWave: number | undefined;
 
   if (options.dispatch) {
     for (const wave of plan.waves) {
@@ -115,6 +160,14 @@ export async function orchestrate(
         }),
       );
       runs.push(...results);
+
+      // Cleanliness, not exit status: a session that crashed having left the
+      // shard conforming is not a reason to abandon the rest of the run, and a
+      // session that exited 0 having drifted very much is.
+      if (options.haltOnWaveFailure && results.some((r) => r.check?.clean !== true)) {
+        haltedAfterWave = wave.index;
+        break;
+      }
     }
   }
 
@@ -131,7 +184,7 @@ export async function orchestrate(
       gateError = String(e?.message ?? e);
     }
   }
-  return { plan, runs, gate, gateError, passed: gate ? gate.passed : false };
+  return { plan, runs, gate, gateError, haltedAfterWave, passed: gate ? gate.passed : false };
 }
 
 /**

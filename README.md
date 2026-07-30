@@ -99,7 +99,7 @@ Three mechanisms enforce the boundaries:
 - `hooks/`, `commands/`, `skills/`, `.claude-plugin/` - the Claude Code plugin surface (SessionStart / PreToolUse / Stop hooks, the `/shard-*` commands, and the sharding skill)
 - `examples/demo/` - a two-shard demo (`orders` provides an Order API; `gateway` consumes it) whose end-to-end test drives the real engine
 - `examples/multistack/` - a five-shard demo with one shard per adapter, proving a single contract gates a workspace whose shards each speak their own format
-- `tests/` - the test suite (183 tests across 26 files)
+- `tests/` - the test suite (208 tests across 27 files)
 - `docs/design.md` - the design spec: premise, scope decisions, and the mechanism in full
 - `docs/surface-format.md` - the canonical `{slice, symbols}` surface format, the finding kinds, and how each adapter reads a shard's surface
 
@@ -117,7 +117,7 @@ Used from inside Claude Code once the plugin is installed. When installed as a p
 | `/shard-phase-check` | anywhere | The gate: run `/shard-check` across all participating shards plus the phase's acceptance suite. |
 | `/shard-status` | anywhere | Print the graph: shards, phase, per-shard drift, contract version, blast radius of a change. |
 | `/shard-plan` | anywhere | Order the current phase's shards into parallel waves, and flag slices nothing in the phase provides. Read-only. |
-| `/shard-orchestrate` | root | Drive a session per shard, wave by wave, then run the gate. Dispatches nothing unless given a session command. Conductor-only. |
+| `/shard-orchestrate` | root | Drive a session per shard, wave by wave, then run the gate. Dispatches nothing unless given `--session-preset claude` or `--session-cmd`, and previews the exact invocation first. Conductor-only. |
 | `/feedback` | anywhere | Send a bug, idea, or drift-check correction to the maintainer's support queue as a ticket, without leaving the session. Shows the exact payload and confirms before sending. |
 
 ## The engine directly (no plugin)
@@ -132,6 +132,7 @@ npm run cli -- status             # graph + per-shard state + blast radius + sta
 npm run cli -- phase-check        # the phase gate
 npm run cli -- plan               # the phase's shards, ordered into parallel waves
 npm run cli -- orchestrate        # drive a session per shard, then run the gate
+npm run cli -- session-preview    # the exact per-shard session invocation, spawning nothing
 npm run cli -- orient --dir <d>   # is this dir a shard or the conductor?
 ```
 
@@ -141,11 +142,34 @@ npm run cli -- orient --dir <d>   # is this dir a shard or the conductor?
 
 ```bash
 npm run cli -- orchestrate                            # plan + gate, dispatch nothing
-npm run cli -- orchestrate --session-cmd '<command>'  # actually drive a session per shard
+npm run cli -- orchestrate --session-cmd '<command>'  # drive an arbitrary command per shard
+npm run cli -- orchestrate --session-preset claude    # drive a headless Claude Code session per shard
 npm run cli -- orchestrate --skip-gate                # dispatch without closing the phase
+npm run cli -- orchestrate --halt-on-wave-failure     # stop after a wave that left a shard unclean
 ```
 
 Dispatching is opt-in because spawning sessions is the one irreversible thing here. A dispatched session's exit code is reported but never substitutes for the verdict: whether a shard is clean is re-read from disk after it runs, so a session that exits 0 having drifted is still reported as drifted.
+
+#### Driving real Claude Code sessions
+
+`--session-preset claude` is the blessed invocation. It exists because the obvious hand-written attempt - a plain interactive `claude` per shard - blocks its wave forever and defeats the concurrency the planner just computed. The preset settles the three things that decide whether an unattended run works:
+
+- `--print`, so each session terminates instead of waiting for a human.
+- `--add-dir <root>/contract`, because a shard session starts in `shards/<name>/` and the contract it is measured against is outside that directory. The contract directory alone is granted, never the workspace root, so sibling shards stay out of reach.
+- A prompt generated from the shard's own `SHARD.md`, its manifest entry, and the surface paths its adapter actually reads - so a `dts` shard is told about `.d.ts` files and a `protobuf` shard about `.proto` files.
+
+```bash
+npm run cli -- session-preview                    # the exact argv and prompt, for every shard
+npm run cli -- session-preview <shard>            # just one
+npm run cli -- orchestrate --session-preset claude \
+  --session-task 'Implement the phase-2 charter.' \
+  --session-model opus \
+  --session-permission-mode bypassPermissions
+```
+
+Run `session-preview` first: it spawns nothing and prints the invocation verbatim, which is what you approve before anything irreversible happens.
+
+The default permission mode is `acceptEdits`, since a shard session's whole job is editing its own directory. `bypassPermissions` is what makes a run genuinely unattended, and it is opt-in on purpose. Neither mode is what isolates the shard - that comes from the working directory plus the plugin's `PreToolUse` hook, which denies reads of sibling shards and writes to the contract regardless of permission mode.
 
 Every command finds the workspace from the working directory, so they run from the
 conductor root, from inside a shard, or from any directory under either. `check` with

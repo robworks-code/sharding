@@ -8498,8 +8498,14 @@ function planPhase(root) {
 import { spawn } from "node:child_process";
 import { join as join12 } from "node:path";
 function commandDispatcher(command) {
-  return ({ shardDir }) => new Promise((resolve4) => {
-    const child = spawn(command, { cwd: shardDir, shell: true, stdio: ["ignore", "pipe", "pipe"] });
+  return ({ shardDir }) => spawnProcess(command, void 0, shardDir);
+}
+function spawnDispatcher(bin, args, shardDir) {
+  return spawnProcess(bin, args, shardDir);
+}
+function spawnProcess(command, args, shardDir) {
+  return new Promise((resolve4) => {
+    const child = args ? spawn(command, args, { cwd: shardDir, stdio: ["ignore", "pipe", "pipe"] }) : spawn(command, { cwd: shardDir, shell: true, stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
     child.stdout.on("data", (d) => output += d);
     child.stderr.on("data", (d) => output += d);
@@ -8511,6 +8517,7 @@ async function orchestrate(root, options = {}) {
   const plan = planPhase(root);
   const manifest = loadManifest(root);
   const runs = [];
+  let haltedAfterWave;
   if (options.dispatch) {
     for (const wave of plan.waves) {
       const results = await Promise.all(
@@ -8543,6 +8550,10 @@ async function orchestrate(root, options = {}) {
         })
       );
       runs.push(...results);
+      if (options.haltOnWaveFailure && results.some((r) => r.check?.clean !== true)) {
+        haltedAfterWave = wave.index;
+        break;
+      }
     }
   }
   let gate = null;
@@ -8554,7 +8565,7 @@ async function orchestrate(root, options = {}) {
       gateError = String(e?.message ?? e);
     }
   }
-  return { plan, runs, gate, gateError, passed: gate ? gate.passed : false };
+  return { plan, runs, gate, gateError, haltedAfterWave, passed: gate ? gate.passed : false };
 }
 function safeCheck(root, shard) {
   try {
@@ -8564,12 +8575,104 @@ function safeCheck(root, shard) {
   }
 }
 
+// src/orchestrate/session.ts
+import { existsSync as existsSync9, readFileSync as readFileSync7 } from "node:fs";
+import { join as join13, relative as relative3 } from "node:path";
+function surfacePathFor(adapterName, shardDir, slice, role) {
+  try {
+    return relative3(shardDir, getAdapter(adapterName).locate(shardDir, slice, role));
+  } catch {
+    return "(unknown adapter - see the manifest)";
+  }
+}
+function sliceLines(adapterName, shardDir, slices, role) {
+  if (slices.length === 0) return "  (none)";
+  return slices.map((slice) => `  - ${slice} -> ${surfacePathFor(adapterName, shardDir, slice, role)}`).join("\n");
+}
+function buildShardPrompt(root, shard, options = {}) {
+  const manifest = options.manifest ?? loadManifest(root);
+  const entry = manifest.shards[shard];
+  if (!entry) throw new Error(`unknown shard: ${shard}`);
+  const shardDir = join13(root, entry.dir);
+  const charterPath = join13(shardDir, "SHARD.md");
+  const charter = existsSync9(charterPath) ? readFileSync7(charterPath, "utf8").trim() : "(this shard has no SHARD.md - treat the slices above as the whole charter)";
+  return [
+    `You are the \`${shard}\` shard in a sharding workspace.`,
+    "",
+    `The contract is frozen at version ${manifest.contractVersion}. You may read it, and you may never write it.`,
+    `Your surface adapter is \`${entry.adapter}\`.`,
+    "",
+    "You PROVIDE these contract slices. Each one must be declared in your own surface:",
+    sliceLines(entry.adapter, shardDir, entry.provides, "provided"),
+    "",
+    "You CONSUME these contract slices. Each one must have a snapshot of the shape you built against:",
+    sliceLines(entry.adapter, shardDir, entry.consumes, "consumed"),
+    "",
+    "Your charter, from SHARD.md:",
+    "---",
+    charter,
+    "---",
+    "",
+    "Working rules:",
+    "- Work only inside this directory. Do not read or write any sibling shard, and do not write the contract. A PreToolUse hook enforces this and will deny the call.",
+    "- Your DECLARED surface is what the gate measures. Implementation with no matching surface file reads as drift, and so does a surface file with nothing behind it.",
+    "- Check yourself at any point with the `/sharding:shard-check` command.",
+    "- Your exit code is not the verdict. The conductor re-reads your surface from disk after you stop, so finishing early with a drifted surface fails the phase just the same.",
+    ...options.task ? ["", "Your task for this phase:", options.task] : [],
+    ""
+  ].join("\n");
+}
+function claudeSessionArgs(prompt, root, options = {}) {
+  const args = [
+    "--print",
+    "--permission-mode",
+    options.permissionMode ?? "acceptEdits",
+    // The contract lives above the session's cwd, so it has to be granted
+    // explicitly. Granting the contract directory alone, rather than the
+    // workspace root, is what keeps sibling shards out of reach.
+    "--add-dir",
+    join13(root, "contract")
+  ];
+  if (options.model) args.push("--model", options.model);
+  args.push(...options.extraArgs ?? []);
+  args.push(prompt);
+  return args;
+}
+function claudeSessionDispatcher(options = {}) {
+  const manifests = /* @__PURE__ */ new Map();
+  return async (ctx) => {
+    if (!manifests.has(ctx.root)) manifests.set(ctx.root, loadManifest(ctx.root));
+    const prompt = buildShardPrompt(ctx.root, ctx.shard, {
+      manifest: manifests.get(ctx.root),
+      task: options.task
+    });
+    return spawnDispatcher(
+      options.bin ?? "claude",
+      claudeSessionArgs(prompt, ctx.root, options),
+      ctx.shardDir
+    );
+  };
+}
+
 // src/cli.ts
-function flags(argv) {
+import { join as join14 } from "node:path";
+function sessionOptions(f) {
+  return {
+    bin: f["session-bin"],
+    model: f["session-model"],
+    permissionMode: f["session-permission-mode"],
+    task: f["session-task"]
+  };
+}
+function parseArgs(argv) {
   const out = {};
+  const positionals = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
-    if (!arg.startsWith("--")) continue;
+    if (!arg.startsWith("--")) {
+      positionals.push(arg);
+      continue;
+    }
     const eq = arg.indexOf("=");
     if (eq !== -1) {
       out[arg.slice(2, eq)] = arg.slice(eq + 1);
@@ -8583,7 +8686,10 @@ function flags(argv) {
       i++;
     }
   }
-  return out;
+  return { flags: out, positionals };
+}
+function flags(argv) {
+  return parseArgs(argv).flags;
 }
 function run(argv, cwd) {
   const [cmd, ...rest] = argv;
@@ -8644,6 +8750,30 @@ function run(argv, cwd) {
       const plan = planPhase(root);
       return { code: 0, stdout: j(plan) };
     }
+    case "session-preview": {
+      const { flags: f, positionals } = parseArgs(rest);
+      const manifest = loadManifest(root);
+      const named = positionals[0];
+      const shards = named ? [named] : planPhase(root).waves.flatMap((w) => w.shards);
+      const unknown = shards.find((s) => !manifest.shards[s]);
+      if (unknown) return { code: 2, stdout: j({ error: `unknown shard: ${unknown}` }) };
+      const options = sessionOptions(f);
+      return {
+        code: 0,
+        stdout: j({
+          bin: options.bin ?? "claude",
+          sessions: shards.map((shard) => {
+            const prompt = buildShardPrompt(root, shard, { manifest, task: options.task });
+            return {
+              shard,
+              cwd: join14(root, manifest.shards[shard].dir),
+              args: claudeSessionArgs(prompt, root, options),
+              prompt
+            };
+          })
+        })
+      };
+    }
     default:
       return { code: 2, stdout: j({ error: `unknown command: ${cmd}` }) };
   }
@@ -8654,9 +8784,23 @@ async function runAsync(argv, cwd) {
   const j = (v) => JSON.stringify(v, null, 2);
   const root = resolveRoot(cwd);
   const f = flags(rest);
+  const preset = f["session-preset"];
+  if (preset && f["session-cmd"]) {
+    return {
+      code: 2,
+      stdout: j({ error: "--session-cmd and --session-preset are alternatives; pass one" })
+    };
+  }
+  if (preset && preset !== "claude") {
+    return { code: 2, stdout: j({ error: `unknown session preset: ${preset} (known: claude)` }) };
+  }
+  let dispatch;
+  if (preset) dispatch = claudeSessionDispatcher(sessionOptions(f));
+  else if (f["session-cmd"]) dispatch = commandDispatcher(f["session-cmd"]);
   const result = await orchestrate(root, {
-    dispatch: f["session-cmd"] ? commandDispatcher(f["session-cmd"]) : void 0,
-    skipGate: "skip-gate" in f
+    dispatch,
+    skipGate: "skip-gate" in f,
+    haltOnWaveFailure: "halt-on-wave-failure" in f
   });
   return { code: result.passed ? 0 : 1, stdout: j(result) };
 }

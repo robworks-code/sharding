@@ -24,10 +24,20 @@ describe("plugin command surface", () => {
     expect(cmd("shard-orchestrate")).toMatch(/cli\.mjs orchestrate/);
   });
   it("makes dispatching opt-in and confirmed, since it spawns real processes", () => {
-    // The default must not spawn anything, and the command must tell the model
-    // to confirm before it does.
+    // The default must not spawn anything, and the command must route approval
+    // through `session-preview` - the point being that the user approves the
+    // real invocation rather than a description of it.
     const orchestrate = cmd("shard-orchestrate");
     expect(orchestrate).toMatch(/dispatches nothing/i);
-    expect(orchestrate).toMatch(/[Cc]onfirm the exact command with the user/);
+    expect(orchestrate).toMatch(/cli\.mjs session-preview/);
+    expect(orchestrate).toMatch(/show the user the exact `args`/);
+  });
+
+  it("documents the claude session preset it is the blessed entry point for", () => {
+    const orchestrate = cmd("shard-orchestrate");
+    expect(orchestrate).toMatch(/--session-preset claude/);
+    // The two dispatch forms are alternatives; a doc that offers both without
+    // saying so invites the combination the CLI rejects.
+    expect(orchestrate).toMatch(/alternatives/);
   });
 });
