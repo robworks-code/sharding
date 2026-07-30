@@ -1,0 +1,111 @@
+{
+  "slice": "Cart",
+  "symbols": {
+    "CartStatus": {
+      "name": "CartStatus",
+      "kind": "type",
+      "shape": {
+        "kind": "enum",
+        "values": [
+          "open",
+          "ordered",
+          "abandoned"
+        ]
+      }
+    },
+    "CartLine": {
+      "name": "CartLine",
+      "kind": "type",
+      "shape": {
+        "kind": "object",
+        "fields": {
+          "sku": {
+            "type": {
+              "kind": "primitive",
+              "name": "string"
+            },
+            "required": true
+          },
+          "quantity": {
+            "type": {
+              "kind": "primitive",
+              "name": "number"
+            },
+            "required": true
+          }
+        }
+      }
+    },
+    "Cart": {
+      "name": "Cart",
+      "kind": "type",
+      "shape": {
+        "kind": "object",
+        "fields": {
+          "id": {
+            "type": {
+              "kind": "primitive",
+              "name": "string"
+            },
+            "required": true
+          },
+          "lines": {
+            "type": {
+              "kind": "array",
+              "items": {
+                "kind": "ref",
+                "name": "CartLine"
+              }
+            },
+            "required": true
+          },
+          "status": {
+            "type": {
+              "kind": "ref",
+              "name": "CartStatus"
+            },
+            "required": true
+          },
+          "note": {
+            "type": {
+              "kind": "primitive",
+              "name": "string"
+            },
+            "required": false
+          }
+        }
+      }
+    },
+    "totalOf": {
+      "name": "totalOf",
+      "kind": "function",
+      "shape": {
+        "kind": "object",
+        "fields": {
+          "params": {
+            "type": {
+              "kind": "object",
+              "fields": {
+                "cart": {
+                  "type": {
+                    "kind": "ref",
+                    "name": "Cart"
+                  },
+                  "required": true
+                }
+              }
+            },
+            "required": true
+          },
+          "returns": {
+            "type": {
+              "kind": "primitive",
+              "name": "number"
+            },
+            "required": true
+          }
+        }
+      }
+    }
+  }
+}

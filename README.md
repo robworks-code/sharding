@@ -98,7 +98,8 @@ Three mechanisms enforce the boundaries:
   - `cli.ts` - a pure, testable dispatch over every engine operation
 - `hooks/`, `commands/`, `skills/`, `.claude-plugin/` - the Claude Code plugin surface (SessionStart / PreToolUse / Stop hooks, the `/shard-*` commands, and the sharding skill)
 - `examples/demo/` - a two-shard demo (`orders` provides an Order API; `gateway` consumes it) whose end-to-end test drives the real engine
-- `tests/` - the test suite (87 tests across 18 files)
+- `examples/multistack/` - a five-shard demo with one shard per adapter, proving a single contract gates a workspace whose shards each speak their own format
+- `tests/` - the test suite (183 tests across 26 files)
 - `docs/design.md` - the design spec: premise, scope decisions, and the mechanism in full
 - `docs/surface-format.md` - the canonical `{slice, symbols}` surface format, the finding kinds, and how each adapter reads a shard's surface
 

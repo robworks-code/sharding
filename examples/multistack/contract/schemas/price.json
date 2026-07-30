@@ -1,0 +1,49 @@
+{
+  "slice": "Price",
+  "symbols": {
+    "PriceQuote": {
+      "name": "PriceQuote",
+      "kind": "type",
+      "shape": {
+        "kind": "object",
+        "fields": {
+          "sku": {
+            "type": {
+              "kind": "primitive",
+              "name": "string"
+            },
+            "required": true
+          },
+          "amount": {
+            "type": {
+              "kind": "ref",
+              "name": "Money"
+            },
+            "required": true
+          },
+          "discount": {
+            "type": {
+              "kind": "primitive",
+              "name": "number"
+            },
+            "required": false
+          },
+          "channels": {
+            "type": {
+              "kind": "array",
+              "items": {
+                "kind": "enum",
+                "values": [
+                  "web",
+                  "mobile",
+                  "partner"
+                ]
+              }
+            },
+            "required": false
+          }
+        }
+      }
+    }
+  }
+}

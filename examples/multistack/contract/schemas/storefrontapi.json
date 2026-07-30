@@ -1,0 +1,128 @@
+{
+  "slice": "StorefrontAPI",
+  "symbols": {
+    "CartView": {
+      "name": "CartView",
+      "kind": "type",
+      "shape": {
+        "kind": "object",
+        "fields": {
+          "id": {
+            "type": {
+              "kind": "primitive",
+              "name": "string"
+            },
+            "required": true
+          },
+          "total": {
+            "type": {
+              "kind": "primitive",
+              "name": "number"
+            },
+            "required": true
+          }
+        }
+      }
+    },
+    "CheckoutReceipt": {
+      "name": "CheckoutReceipt",
+      "kind": "type",
+      "shape": {
+        "kind": "object",
+        "fields": {
+          "orderId": {
+            "type": {
+              "kind": "primitive",
+              "name": "string"
+            },
+            "required": true
+          },
+          "placedAt": {
+            "type": {
+              "kind": "primitive",
+              "name": "string"
+            },
+            "required": false
+          }
+        }
+      }
+    },
+    "getCart": {
+      "name": "getCart",
+      "kind": "endpoint",
+      "shape": {
+        "kind": "object",
+        "fields": {
+          "request": {
+            "type": {
+              "kind": "object",
+              "fields": {
+                "cartId": {
+                  "type": {
+                    "kind": "primitive",
+                    "name": "string"
+                  },
+                  "required": true
+                }
+              }
+            },
+            "required": true
+          },
+          "response": {
+            "type": {
+              "kind": "ref",
+              "name": "CartView"
+            },
+            "required": true
+          }
+        }
+      }
+    },
+    "checkoutCart": {
+      "name": "checkoutCart",
+      "kind": "endpoint",
+      "shape": {
+        "kind": "object",
+        "fields": {
+          "request": {
+            "type": {
+              "kind": "object",
+              "fields": {
+                "cartId": {
+                  "type": {
+                    "kind": "primitive",
+                    "name": "string"
+                  },
+                  "required": true
+                },
+                "body": {
+                  "type": {
+                    "kind": "object",
+                    "fields": {
+                      "paymentToken": {
+                        "type": {
+                          "kind": "primitive",
+                          "name": "string"
+                        },
+                        "required": true
+                      }
+                    }
+                  },
+                  "required": true
+                }
+              }
+            },
+            "required": true
+          },
+          "response": {
+            "type": {
+              "kind": "ref",
+              "name": "CheckoutReceipt"
+            },
+            "required": true
+          }
+        }
+      }
+    }
+  }
+}

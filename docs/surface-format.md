@@ -147,7 +147,8 @@ consumed one from `surface/consumed/`, with the same filename convention:
 
 Projects may be multi-stack: each shard picks its own adapter and every shard
 still diffs against the same contract. A stack with no adapter degrades honestly
-to gate-only rather than faking a green check.
+to gate-only rather than faking a green check. `examples/multistack/` is exactly
+that workspace - see [A multi-stack example](#a-multi-stack-example) below.
 
 ## Contract files
 
@@ -237,6 +238,38 @@ slice as the gateway built against it. If the conductor later narrows
 `placeOrder`, the gateway's snapshot no longer matches the frozen contract and
 the consume-side check reports it - which is how a contract change under a shard
 that was not looking gets caught.
+
+## A multi-stack example
+
+`examples/multistack/` is the same mechanism with five shards that do not share
+a format. One contract, one differ, five adapters:
+
+| Shard | Adapter | Provides | Consumes | Surface file for slice `X` |
+| --- | --- | --- | --- | --- |
+| `catalog` | `identity` | `Product`, `Money` | - | `X.json` |
+| `pricing` | `jsonschema` | `Price` | `Product`, `Money` | `X.schema.json` |
+| `checkout` | `dts` | `Cart` | `Product` | `X.d.ts` |
+| `storefront` | `openapi` | `StorefrontAPI` | `Product` | `X.openapi.yaml` \| `X.openapi.json` |
+| `telemetry` | `protobuf` | `PurchaseEvent` | `Product` | `X.proto` |
+
+Three things it exists to make concrete:
+
+- **A consumed snapshot is written in the consuming shard's own format.** The
+  `Product` slice is one contract entry, snapshotted four different ways -
+  `Product.schema.json`, `Product.d.ts`, `Product.openapi.json`,
+  `Product.proto`. A shard never hand-writes canonical IR for something it did
+  not choose the `identity` adapter for.
+- **A slice name is not a symbol name.** `pricing` provides the `Price` slice
+  with a schema whose `title` is `PriceQuote`; the slice is the unit of
+  coupling, the symbol is what the differ compares inside it.
+- **The lowest common denominator wins on `required`.** `Product` declares no
+  required fields anywhere, because `telemetry` reads it as proto3 and proto3
+  has no `required`. Declaring one would produce `required-mismatch` findings
+  against a shard that is behaving correctly.
+
+`tests/e2e/multistack.test.ts` runs the real engine over it: a clean phase gate,
+the two-wave plan, and drift caught in each shard's own format on both the
+provided and consumed side.
 
 ## Related
 

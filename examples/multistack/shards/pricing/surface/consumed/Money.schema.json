@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Money",
+  "type": "object",
+  "required": ["amount", "currency"],
+  "properties": {
+    "amount": { "type": "number" },
+    "currency": { "type": "string" }
+  }
+}

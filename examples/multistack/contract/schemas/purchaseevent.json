@@ -1,0 +1,96 @@
+{
+  "slice": "PurchaseEvent",
+  "symbols": {
+    "PurchaseEvent": {
+      "name": "PurchaseEvent",
+      "kind": "type",
+      "shape": {
+        "kind": "object",
+        "fields": {
+          "id": {
+            "type": {
+              "kind": "primitive",
+              "name": "string"
+            },
+            "required": false
+          },
+          "sku": {
+            "type": {
+              "kind": "primitive",
+              "name": "string"
+            },
+            "required": false
+          },
+          "channel": {
+            "type": {
+              "kind": "ref",
+              "name": "Channel"
+            },
+            "required": false
+          },
+          "experiments": {
+            "type": {
+              "kind": "array",
+              "items": {
+                "kind": "primitive",
+                "name": "string"
+              }
+            },
+            "required": false
+          }
+        }
+      }
+    },
+    "RecordAck": {
+      "name": "RecordAck",
+      "kind": "type",
+      "shape": {
+        "kind": "object",
+        "fields": {
+          "accepted": {
+            "type": {
+              "kind": "primitive",
+              "name": "boolean"
+            },
+            "required": false
+          }
+        }
+      }
+    },
+    "Channel": {
+      "name": "Channel",
+      "kind": "type",
+      "shape": {
+        "kind": "enum",
+        "values": [
+          "CHANNEL_UNSPECIFIED",
+          "CHANNEL_WEB",
+          "CHANNEL_MOBILE"
+        ]
+      }
+    },
+    "PurchaseIngest.Record": {
+      "name": "PurchaseIngest.Record",
+      "kind": "endpoint",
+      "shape": {
+        "kind": "object",
+        "fields": {
+          "request": {
+            "type": {
+              "kind": "ref",
+              "name": "PurchaseEvent"
+            },
+            "required": true
+          },
+          "response": {
+            "type": {
+              "kind": "ref",
+              "name": "RecordAck"
+            },
+            "required": true
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PriceQuote",
+  "type": "object",
+  "required": ["sku", "amount"],
+  "properties": {
+    "sku": { "type": "string" },
+    "amount": { "$ref": "#/$defs/Money" },
+    "discount": { "type": "integer" },
+    "channels": {
+      "type": "array",
+      "items": { "enum": ["web", "mobile", "partner"] }
+    }
+  }
+}
