@@ -6,6 +6,8 @@ import { loadContract } from "./contract/model";
 import { locateShard, writeAck } from "./shard/ack";
 import { isReadAllowed, isWriteAllowed } from "./isolation/sandbox";
 import { resolveRoot } from "./workspace/root";
+import { planPhase } from "./orchestrate/plan";
+import { commandDispatcher, orchestrate } from "./orchestrate/run";
 
 function flags(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -88,13 +90,43 @@ export function run(argv: string[], cwd: string): { code: number; stdout: string
       const entry = manifest.shards[shard];
       return { code: 0, stdout: j({ role: "shard", shard, consumes: entry.consumes }) };
     }
+    case "plan": {
+      const plan = planPhase(root);
+      return { code: 0, stdout: j(plan) };
+    }
     default:
       return { code: 2, stdout: j({ error: `unknown command: ${cmd}` }) };
   }
 }
 
+/**
+ * Async dispatch layered over `run`.
+ *
+ * Only orchestration needs to be asynchronous - it drives real child processes
+ * concurrently. Every other command stays synchronous and independently
+ * testable, so adding the orchestrator did not make the rest of the CLI
+ * await-shaped for no reason.
+ */
+export async function runAsync(argv: string[], cwd: string): Promise<{ code: number; stdout: string }> {
+  const [cmd, ...rest] = argv;
+  if (cmd !== "orchestrate") return run(argv, cwd);
+
+  const j = (v: unknown) => JSON.stringify(v, null, 2);
+  const root = resolveRoot(cwd);
+  const f = flags(rest);
+
+  // Without --session-cmd the orchestrator plans and gates but dispatches
+  // nothing. That is the honest default: spawning sessions is the one
+  // irreversible thing here, so it happens only when explicitly asked for.
+  const result = await orchestrate(root, {
+    dispatch: f["session-cmd"] ? commandDispatcher(f["session-cmd"]) : undefined,
+    skipGate: "skip-gate" in f,
+  });
+  return { code: result.passed ? 0 : 1, stdout: j(result) };
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const { code, stdout } = run(process.argv.slice(2), process.cwd());
+  const { code, stdout } = await runAsync(process.argv.slice(2), process.cwd());
   process.stdout.write(stdout + "\n");
   process.exit(code);
 }
