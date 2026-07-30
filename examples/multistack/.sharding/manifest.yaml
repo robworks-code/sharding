@@ -1,0 +1,28 @@
+contractVersion: v1
+currentPhase: phase-1
+shards:
+  catalog:
+    dir: shards/catalog
+    adapter: identity
+    provides: [Product, Money]
+    consumes: []
+  pricing:
+    dir: shards/pricing
+    adapter: jsonschema
+    provides: [Price]
+    consumes: [Product, Money]
+  checkout:
+    dir: shards/checkout
+    adapter: dts
+    provides: [Cart]
+    consumes: [Product]
+  storefront:
+    dir: shards/storefront
+    adapter: openapi
+    provides: [StorefrontAPI]
+    consumes: [Product]
+  telemetry:
+    dir: shards/telemetry
+    adapter: protobuf
+    provides: [PurchaseEvent]
+    consumes: [Product]

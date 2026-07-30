@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package multistack.catalog;
+
+// Money is defined in the catalog shard's own schema; proto3 compares it by
+// name here, which is exactly what the differ does with a `ref`.
+message Product {
+  string sku = 1;
+  string title = 2;
+  repeated string tags = 3;
+  Money price = 4;
+}

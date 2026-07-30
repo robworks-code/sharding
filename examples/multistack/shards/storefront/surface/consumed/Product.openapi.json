@@ -1,0 +1,18 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Product (consumed snapshot)", "version": "1.0.0" },
+  "paths": {},
+  "components": {
+    "schemas": {
+      "Product": {
+        "type": "object",
+        "properties": {
+          "sku": { "type": "string" },
+          "title": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "price": { "$ref": "#/components/schemas/Money" }
+        }
+      }
+    }
+  }
+}

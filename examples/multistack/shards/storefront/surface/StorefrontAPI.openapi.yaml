@@ -1,0 +1,60 @@
+openapi: 3.0.3
+info:
+  title: Storefront
+  version: 1.0.0
+
+# Emitted as YAML on purpose: the adapter honors whichever form the shard's
+# framework produces, and the sibling consumed snapshot is JSON.
+paths:
+  /carts/{cartId}:
+    get:
+      operationId: getCart
+      parameters:
+        - name: cartId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: the cart
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CartView" }
+  /carts/{cartId}/checkout:
+    post:
+      operationId: checkoutCart
+      parameters:
+        - name: cartId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paymentToken]
+              properties:
+                paymentToken: { type: string }
+      responses:
+        "202":
+          description: accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CheckoutReceipt" }
+
+components:
+  schemas:
+    CartView:
+      type: object
+      required: [id, total]
+      properties:
+        id: { type: string }
+        total: { type: number }
+    CheckoutReceipt:
+      type: object
+      required: [orderId]
+      properties:
+        orderId: { type: string }
+        placedAt: { type: string }

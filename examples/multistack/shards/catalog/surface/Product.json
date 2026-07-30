@@ -1,0 +1,18 @@
+{
+  "slice": "Product",
+  "symbols": {
+    "Product": {
+      "name": "Product",
+      "kind": "type",
+      "shape": {
+        "kind": "object",
+        "fields": {
+          "sku": { "type": { "kind": "primitive", "name": "string" }, "required": false },
+          "title": { "type": { "kind": "primitive", "name": "string" }, "required": false },
+          "tags": { "type": { "kind": "array", "items": { "kind": "primitive", "name": "string" } }, "required": false },
+          "price": { "type": { "kind": "ref", "name": "Money" }, "required": false }
+        }
+      }
+    }
+  }
+}

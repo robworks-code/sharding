@@ -1,0 +1,1 @@
+This is the `pricing` shard. A session opened here may read only this directory and the read-only `contract/` directory - no sibling shard, no writing the contract. It couples to other shards solely through the frozen contract, and it declares its surface with the `jsonschema` adapter. See `SHARD.md` for what this shard provides and consumes.

@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package multistack.telemetry;
+
+enum Channel {
+  CHANNEL_UNSPECIFIED = 0;
+  CHANNEL_WEB = 1;
+  CHANNEL_MOBILE = 2;
+}
+
+message PurchaseEvent {
+  string id = 1;
+  string sku = 2;
+  Channel channel = 3;
+  repeated string experiments = 4;
+}
+
+message RecordAck {
+  bool accepted = 1;
+}
+
+service PurchaseIngest {
+  rpc Record(PurchaseEvent) returns (RecordAck);
+}

@@ -7796,7 +7796,15 @@ import { join as join6 } from "node:path";
 // src/surface/jsonSchemaShape.ts
 function jsonSchemaToShape(node) {
   if (!node || typeof node !== "object") return { kind: "primitive", name: "null" };
-  if (node.$ref) return { kind: "ref", name: String(node.$ref).split("/").pop() ?? "" };
+  if ("$ref" in node) {
+    const name = String(node.$ref ?? "").split("/").pop() ?? "";
+    if (!name) {
+      throw new Error(
+        `$ref ${JSON.stringify(node.$ref)} does not name a symbol. Write the whole pointer (e.g. "#/components/schemas/Money") - a ref is matched against the contract by its last segment.`
+      );
+    }
+    return { kind: "ref", name };
+  }
   if (node.enum) return { kind: "enum", values: node.enum.map(String) };
   if (Array.isArray(node.allOf)) return mergeAll(node.allOf);
   for (const key of ["oneOf", "anyOf"]) {

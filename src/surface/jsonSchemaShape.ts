@@ -12,7 +12,20 @@ export function jsonSchemaToShape(node: any): ShapeType {
   if (!node || typeof node !== "object") return { kind: "primitive", name: "null" };
 
   // $ref wins over everything: a node carrying one has no local shape to read.
-  if (node.$ref) return { kind: "ref", name: String(node.$ref).split("/").pop() ?? "" };
+  // A ref is compared by name, so one that yields no name is not a ref the
+  // differ can use. Falling through (which a truthiness check on `$ref` did)
+  // sent it to the default branch and it came out a null primitive - a shape
+  // nobody declared, reported downstream as confident type drift.
+  if ("$ref" in node) {
+    const name = String(node.$ref ?? "").split("/").pop() ?? "";
+    if (!name) {
+      throw new Error(
+        `$ref ${JSON.stringify(node.$ref)} does not name a symbol. Write the whole pointer ` +
+          `(e.g. "#/components/schemas/Money") - a ref is matched against the contract by its last segment.`,
+      );
+    }
+    return { kind: "ref", name };
+  }
   if (node.enum) return { kind: "enum", values: node.enum.map(String) };
 
   // Composition keywords. These are rare in hand-written JSON Schema but very
