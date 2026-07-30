@@ -7,7 +7,9 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "build": "esbuild src/cli.ts --bundle --platform=node --format=esm --outfile=dist/cli.mjs --banner:js=\"import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);\"",
+    "build": "node scripts/build.mjs",
+    "verify": "npm run typecheck && npm run build && npm test",
+    "prepush": "npm run verify && node scripts/check-dist-committed.mjs",
     "cli": "tsx src/cli.ts"
   },
   "devDependencies": {
