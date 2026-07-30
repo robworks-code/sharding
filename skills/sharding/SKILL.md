@@ -20,5 +20,8 @@ A sharded project develops one product as isolated **shards** that couple ONLY t
 - A version bump marks every shard stale until that shard acknowledges the new contract. Staleness is not drift: `/shard-check` stays green and the Stop hook still lets a shard finish, but the phase gate blocks. Only the shard itself can clear it, from its own session - you do not acknowledge on its behalf, because judging a structurally invisible change requires reading that shard's implementation. A clean structural diff alone never re-blesses a shard, which is the point for changes a shape diff cannot see.
 - `/shard-phase-check` gates a phase: every participating shard clean AND acknowledged against the frozen contract version AND the acceptance suite green. Only then close the phase and tag the snapshot.
 
+## The surface format
+Every contract slice file and every shard surface file is canonical structural JSON - `{slice, symbols}`, with shape kinds `primitive|object|array|enum|ref` and symbol kinds `type|endpoint|function|event`. A free-form `provides`/`operations` shape is rejected, loudly and by filename. See `docs/surface-format.md` for the format, the finding kinds, and which file each adapter reads (`identity` -> `<slice>.json`, `jsonschema` -> `<slice>.schema.json`, `dts` -> `<slice>.d.ts`, `openapi` -> `<slice>.openapi.json`, `protobuf` -> `<slice>.proto`). Whichever adapter your shard uses, it applies to both what you provide and what you consume.
+
 ## The one rule
 Never make a shard depend on another shard's internals. All cross-shard coupling goes through `contract/`, and every divergence is caught mechanically at a gate.

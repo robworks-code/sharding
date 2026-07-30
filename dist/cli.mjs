@@ -7359,24 +7359,150 @@ var require_dist = __commonJS({
 });
 
 // src/check/shardCheck.ts
-import { existsSync as existsSync6, readFileSync as readFileSync6 } from "node:fs";
-import { join as join6 } from "node:path";
+import { existsSync as existsSync6, readFileSync as readFileSync5 } from "node:fs";
+import { join as join9, relative } from "node:path";
 
 // src/contract/model.ts
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+
+// src/surface/validate.ts
+var PRIMITIVE_NAMES = /* @__PURE__ */ new Set(["string", "number", "boolean", "null"]);
+var SYMBOL_KINDS = /* @__PURE__ */ new Set(["type", "endpoint", "function", "event"]);
+var SHAPE_KINDS = /* @__PURE__ */ new Set(["primitive", "object", "array", "enum", "ref"]);
+var SurfaceValidationError = class extends Error {
+  constructor(source, path, detail) {
+    super(`${source}: ${path} ${detail}`);
+    this.name = "SurfaceValidationError";
+  }
+};
+function isPlainObject(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function validateShape(node, source, path) {
+  if (!isPlainObject(node)) {
+    throw new SurfaceValidationError(source, path, "must be a shape object");
+  }
+  const kind = node.kind;
+  if (typeof kind !== "string" || !SHAPE_KINDS.has(kind)) {
+    throw new SurfaceValidationError(
+      source,
+      path,
+      `has an invalid shape kind ${JSON.stringify(kind)} (expected one of ${[...SHAPE_KINDS].join(", ")})`
+    );
+  }
+  switch (kind) {
+    case "primitive": {
+      if (typeof node.name !== "string" || !PRIMITIVE_NAMES.has(node.name)) {
+        throw new SurfaceValidationError(
+          source,
+          path,
+          `is a primitive with an invalid name ${JSON.stringify(node.name)} (expected one of ${[...PRIMITIVE_NAMES].join(", ")})`
+        );
+      }
+      return { kind: "primitive", name: node.name };
+    }
+    case "object": {
+      if (!isPlainObject(node.fields)) {
+        throw new SurfaceValidationError(source, path, "is an object shape but has no `fields` object");
+      }
+      const fields = {};
+      for (const [name, raw] of Object.entries(node.fields)) {
+        const fieldPath = `${path}.${name}`;
+        if (!isPlainObject(raw)) {
+          throw new SurfaceValidationError(source, fieldPath, "must be a { type, required } field object");
+        }
+        if (typeof raw.required !== "boolean") {
+          throw new SurfaceValidationError(
+            source,
+            fieldPath,
+            `must declare \`required\` as a boolean (got ${JSON.stringify(raw.required)})`
+          );
+        }
+        fields[name] = { type: validateShape(raw.type, source, `${fieldPath}.type`), required: raw.required };
+      }
+      return { kind: "object", fields };
+    }
+    case "array": {
+      return { kind: "array", items: validateShape(node.items, source, `${path}[]`) };
+    }
+    case "enum": {
+      if (!Array.isArray(node.values) || node.values.some((v) => typeof v !== "string")) {
+        throw new SurfaceValidationError(source, path, "is an enum but `values` is not an array of strings");
+      }
+      return { kind: "enum", values: node.values };
+    }
+    case "ref": {
+      if (typeof node.name !== "string" || node.name.length === 0) {
+        throw new SurfaceValidationError(source, path, "is a ref but has no non-empty `name`");
+      }
+      return { kind: "ref", name: node.name };
+    }
+    /* c8 ignore next */
+    default:
+      throw new SurfaceValidationError(source, path, `has an unhandled shape kind ${kind}`);
+  }
+}
+function validateSymbol(node, source, key) {
+  const path = `symbols.${key}`;
+  if (!isPlainObject(node)) {
+    throw new SurfaceValidationError(source, path, "must be a symbol object");
+  }
+  if (typeof node.kind !== "string" || !SYMBOL_KINDS.has(node.kind)) {
+    throw new SurfaceValidationError(
+      source,
+      path,
+      `has an invalid symbol kind ${JSON.stringify(node.kind)} (expected one of ${[...SYMBOL_KINDS].join(", ")})`
+    );
+  }
+  const name = node.name === void 0 ? key : node.name;
+  if (typeof name !== "string" || name.length === 0) {
+    throw new SurfaceValidationError(source, path, "has a `name` that is not a non-empty string");
+  }
+  if (name !== key) {
+    throw new SurfaceValidationError(
+      source,
+      path,
+      `declares name ${JSON.stringify(name)} but is keyed as ${JSON.stringify(key)} (they must match)`
+    );
+  }
+  return { name, kind: node.kind, shape: validateShape(node.shape, source, `${path}.shape`) };
+}
+function validateSurface(value, source, expectedSlice) {
+  if (!isPlainObject(value)) {
+    throw new SurfaceValidationError(source, "<root>", "must be a JSON object (expected canonical { slice, symbols })");
+  }
+  if (typeof value.slice !== "string" || value.slice.length === 0) {
+    throw new SurfaceValidationError(
+      source,
+      "slice",
+      "is missing or not a non-empty string (expected canonical { slice, symbols } surface)"
+    );
+  }
+  if (!isPlainObject(value.symbols)) {
+    throw new SurfaceValidationError(source, "symbols", "is missing or not an object");
+  }
+  if (expectedSlice !== void 0 && value.slice !== expectedSlice) {
+    throw new SurfaceValidationError(
+      source,
+      "slice",
+      `declares ${JSON.stringify(value.slice)} but was read as slice ${JSON.stringify(expectedSlice)}`
+    );
+  }
+  const symbols = {};
+  for (const [key, raw] of Object.entries(value.symbols)) {
+    symbols[key] = validateSymbol(raw, source, key);
+  }
+  return { slice: value.slice, symbols };
+}
+
+// src/contract/model.ts
 function loadDir(dir, into) {
   if (!existsSync(dir)) return;
   for (const file of readdirSync(dir)) {
     if (!file.endsWith(".json")) continue;
     const path = join(dir, file);
-    const surface = JSON.parse(readFileSync(path, "utf8"));
-    if (typeof surface.slice !== "string" || surface.slice.length === 0) {
-      throw new Error(`contract file ${path} is missing a string "slice" field (expected canonical { slice, symbols } surface)`);
-    }
-    if (typeof surface.symbols !== "object" || surface.symbols === null) {
-      throw new Error(`contract slice "${surface.slice}" (${path}) is missing a "symbols" object`);
-    }
+    const surface = validateSurface(JSON.parse(readFileSync(path, "utf8")), path);
     if (into[surface.slice]) {
       throw new Error(`contract slice "${surface.slice}" is declared twice (duplicate in ${path})`);
     }
@@ -7444,37 +7570,246 @@ function writeAck(shardDir, version) {
 `);
 }
 
-// src/adapters/identity.ts
-import { existsSync as existsSync4, readFileSync as readFileSync4 } from "node:fs";
+// src/adapters/index.ts
+import { existsSync as existsSync5, readFileSync as readFileSync4 } from "node:fs";
+
+// src/adapters/dts.ts
+import { createRequire } from "node:module";
 import { join as join4 } from "node:path";
-function surfacePath(shardDir, slice) {
-  return join4(shardDir, "surface", `${slice}.json`);
+var cache = /* @__PURE__ */ new Map();
+function loadTypeScript(shardDir, source) {
+  const cached = cache.get(shardDir);
+  if (cached) return cached;
+  try {
+    const req = createRequire(join4(shardDir, "__sharding__.js"));
+    const ts = req("typescript");
+    cache.set(shardDir, ts);
+    return ts;
+  } catch {
+    throw new Error(
+      `${source}: the dts adapter needs TypeScript resolvable from ${shardDir}, but \`require("typescript")\` failed there. Install it in the shard (\`npm install --save-dev typescript\`) - the adapter reads the declarations your own build emits.`
+    );
+  }
 }
+function unsupported(ts, node, source, path) {
+  throw new Error(
+    `${source}: ${path} uses a TypeScript type the dts adapter cannot represent structurally (${ts.SyntaxKind[node.kind]}). The canonical surface supports primitives, objects, arrays, string-literal unions, and named references. Simplify the declaration or declare this slice with the identity adapter.`
+  );
+}
+function isNullish(ts, node) {
+  return node.kind === ts.SyntaxKind.UndefinedKeyword || node.kind === ts.SyntaxKind.VoidKeyword || ts.isLiteralTypeNode(node) && node.literal.kind === ts.SyntaxKind.NullKeyword;
+}
+function toShape(ts, node, source, path) {
+  switch (node.kind) {
+    case ts.SyntaxKind.StringKeyword:
+      return { kind: "primitive", name: "string" };
+    case ts.SyntaxKind.NumberKeyword:
+      return { kind: "primitive", name: "number" };
+    case ts.SyntaxKind.BooleanKeyword:
+      return { kind: "primitive", name: "boolean" };
+    case ts.SyntaxKind.NullKeyword:
+    // `void` and `undefined` are "returns nothing", which the canonical
+    // surface spells as the null primitive. A consumer depends on the absence
+    // of a value in exactly the same way.
+    case ts.SyntaxKind.VoidKeyword:
+    case ts.SyntaxKind.UndefinedKeyword:
+      return { kind: "primitive", name: "null" };
+  }
+  if (ts.isLiteralTypeNode(node) && node.literal.kind === ts.SyntaxKind.NullKeyword) {
+    return { kind: "primitive", name: "null" };
+  }
+  if (ts.isArrayTypeNode(node)) {
+    return { kind: "array", items: toShape(ts, node.elementType, source, `${path}[]`) };
+  }
+  if (ts.isTypeLiteralNode(node)) {
+    return { kind: "object", fields: membersToFields(ts, node.members, source, path) };
+  }
+  if (ts.isParenthesizedTypeNode(node)) {
+    return toShape(ts, node.type, source, path);
+  }
+  if (ts.isUnionTypeNode(node)) {
+    const meaningful = node.types.filter((t) => !isNullish(ts, t));
+    if (meaningful.length === 0) return { kind: "primitive", name: "null" };
+    if (meaningful.length === 1) return toShape(ts, meaningful[0], source, path);
+    if (meaningful.every((t) => ts.isLiteralTypeNode(t) && ts.isStringLiteral(t.literal))) {
+      return { kind: "enum", values: meaningful.map((t) => t.literal.text) };
+    }
+    unsupported(ts, node, source, path);
+  }
+  if (ts.isTypeReferenceNode(node)) {
+    const name = node.typeName.getText();
+    if ((name === "Array" || name === "ReadonlyArray") && node.typeArguments?.length === 1) {
+      return { kind: "array", items: toShape(ts, node.typeArguments[0], source, `${path}[]`) };
+    }
+    return { kind: "ref", name };
+  }
+  unsupported(ts, node, source, path);
+}
+function membersToFields(ts, members, source, path) {
+  const fields = {};
+  for (const member of members) {
+    if (!member.name) {
+      unsupported(ts, member, source, path);
+    }
+    const name = member.name.getText();
+    const fieldPath = `${path}.${name}`;
+    if (ts.isPropertySignature(member)) {
+      if (!member.type) unsupported(ts, member, source, fieldPath);
+      fields[name] = {
+        type: toShape(ts, member.type, source, fieldPath),
+        required: member.questionToken === void 0
+      };
+      continue;
+    }
+    if (ts.isMethodSignature(member)) {
+      fields[name] = { type: signatureToShape(ts, member, source, fieldPath), required: true };
+      continue;
+    }
+    if (ts.isPropertyDeclaration(member) || ts.isMethodDeclaration(member)) {
+      const hidden = member.modifiers?.some(
+        (m) => m.kind === ts.SyntaxKind.PrivateKeyword || m.kind === ts.SyntaxKind.ProtectedKeyword
+      );
+      if (hidden) continue;
+      fields[name] = ts.isMethodDeclaration(member) ? { type: signatureToShape(ts, member, source, fieldPath), required: true } : {
+        type: member.type ? toShape(ts, member.type, source, fieldPath) : unsupported(ts, member, source, fieldPath),
+        required: member.questionToken === void 0
+      };
+      continue;
+    }
+    unsupported(ts, member, source, fieldPath);
+  }
+  return fields;
+}
+function signatureToShape(ts, node, source, path) {
+  const params = {};
+  for (const p of node.parameters) {
+    const name = p.name.getText();
+    if (!p.type) unsupported(ts, p, source, `${path}.params.${name}`);
+    params[name] = {
+      type: toShape(ts, p.type, source, `${path}.params.${name}`),
+      required: p.questionToken === void 0 && p.initializer === void 0
+    };
+  }
+  return {
+    kind: "object",
+    fields: {
+      params: { type: { kind: "object", fields: params }, required: true },
+      returns: {
+        type: node.type ? toShape(ts, node.type, source, `${path}.returns`) : { kind: "primitive", name: "null" },
+        required: true
+      }
+    }
+  };
+}
+function isExported(ts, node) {
+  return node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+}
+var dtsAdapter = {
+  name: "dts",
+  locate(shardDir, slice, role) {
+    return role === "consumed" ? join4(shardDir, "surface", "consumed", `${slice}.d.ts`) : join4(shardDir, "surface", `${slice}.d.ts`);
+  },
+  parse(raw, slice, source) {
+    const shardDir = source.replace(/[/\\]surface[/\\].*$/, "");
+    const ts = loadTypeScript(shardDir, source);
+    const sf = ts.createSourceFile(source, raw, ts.ScriptTarget.Latest, true);
+    const localInterfaces = /* @__PURE__ */ new Map();
+    for (const stmt of sf.statements) {
+      if (ts.isInterfaceDeclaration(stmt)) localInterfaces.set(stmt.name.text, stmt);
+    }
+    const interfaceFields = (decl, name, seen) => {
+      if (seen.has(name)) return {};
+      seen.add(name);
+      const inherited = {};
+      for (const clause of decl.heritageClauses ?? []) {
+        if (clause.token !== ts.SyntaxKind.ExtendsKeyword) continue;
+        for (const t of clause.types) {
+          const baseName = t.expression.getText();
+          const base = localInterfaces.get(baseName);
+          if (!base) {
+            throw new Error(
+              `${source}: ${name} extends ${baseName}, which is not declared in this file. The dts adapter reads one emitted declaration file and cannot resolve a base from another. Emit the slice's declarations together, or declare this slice with the identity adapter.`
+            );
+          }
+          Object.assign(inherited, interfaceFields(base, baseName, seen));
+        }
+      }
+      return { ...inherited, ...membersToFields(ts, decl.members, source, name) };
+    };
+    const symbols = {};
+    for (const stmt of sf.statements) {
+      if (!isExported(ts, stmt)) continue;
+      if (ts.isInterfaceDeclaration(stmt)) {
+        const name = stmt.name.text;
+        symbols[name] = {
+          name,
+          kind: "type",
+          shape: { kind: "object", fields: interfaceFields(stmt, name, /* @__PURE__ */ new Set()) }
+        };
+      } else if (ts.isEnumDeclaration(stmt)) {
+        const name = stmt.name.text;
+        symbols[name] = {
+          name,
+          kind: "type",
+          shape: { kind: "enum", values: stmt.members.map((m) => m.name.getText()) }
+        };
+      } else if (ts.isClassDeclaration(stmt) && stmt.name) {
+        const name = stmt.name.text;
+        symbols[name] = {
+          name,
+          kind: "type",
+          shape: { kind: "object", fields: membersToFields(ts, stmt.members, source, name) }
+        };
+      } else if (ts.isVariableStatement(stmt)) {
+        for (const decl of stmt.declarationList.declarations) {
+          const name = decl.name.getText();
+          if (!decl.type) unsupported(ts, decl, source, name);
+          symbols[name] = { name, kind: "type", shape: toShape(ts, decl.type, source, name) };
+        }
+      } else if (ts.isTypeAliasDeclaration(stmt)) {
+        const name = stmt.name.text;
+        symbols[name] = { name, kind: "type", shape: toShape(ts, stmt.type, source, name) };
+      } else if (ts.isFunctionDeclaration(stmt) && stmt.name) {
+        const name = stmt.name.text;
+        symbols[name] = { name, kind: "function", shape: signatureToShape(ts, stmt, source, name) };
+      }
+    }
+    return { slice, symbols };
+  }
+};
+
+// src/adapters/identity.ts
+import { join as join5 } from "node:path";
 var identityAdapter = {
   name: "identity",
-  exists(shardDir, slice) {
-    return existsSync4(surfacePath(shardDir, slice));
+  locate(shardDir, slice, role) {
+    return role === "consumed" ? join5(shardDir, "surface", "consumed", `${slice}.json`) : join5(shardDir, "surface", `${slice}.json`);
   },
-  extract(shardDir, slice) {
-    return JSON.parse(readFileSync4(surfacePath(shardDir, slice), "utf8"));
+  parse(raw) {
+    return JSON.parse(raw);
   }
 };
 
 // src/adapters/jsonschema.ts
-import { existsSync as existsSync5, readFileSync as readFileSync5 } from "node:fs";
-import { join as join5 } from "node:path";
-function schemaPath(shardDir, slice) {
-  return join5(shardDir, "surface", `${slice}.schema.json`);
-}
-function toShape(node) {
+import { join as join6 } from "node:path";
+
+// src/surface/jsonSchemaShape.ts
+function jsonSchemaToShape(node) {
+  if (!node || typeof node !== "object") return { kind: "primitive", name: "null" };
+  if (node.$ref) return { kind: "ref", name: String(node.$ref).split("/").pop() ?? "" };
   if (node.enum) return { kind: "enum", values: node.enum.map(String) };
-  if (node.type === "object" || node.type === void 0 && node.properties) {
-    const required = node.required ?? [];
-    const fields = {};
-    for (const [k, v] of Object.entries(node.properties ?? {})) {
-      fields[k] = { type: toShape(v), required: required.includes(k) };
+  if (Array.isArray(node.allOf)) return mergeAll(node.allOf);
+  for (const key of ["oneOf", "anyOf"]) {
+    const branches = node[key];
+    if (Array.isArray(branches)) {
+      if (branches.length === 1) return jsonSchemaToShape(branches[0]);
+      throw new Error(
+        `${key} with ${branches.length} branches has no structural equivalent in the canonical surface. Model the shared shape with allOf or $ref, or declare this slice with the identity adapter.`
+      );
     }
-    return { kind: "object", fields };
+  }
+  if (node.type === "object" || node.type === void 0 && node.properties) {
+    return { kind: "object", fields: propertiesToFields(node) };
   }
   switch (node.type) {
     case "string":
@@ -7485,36 +7820,327 @@ function toShape(node) {
     case "integer":
       return { kind: "primitive", name: "number" };
     case "array":
-      return { kind: "array", items: toShape(node.items ?? { type: "null" }) };
+      return { kind: "array", items: jsonSchemaToShape(node.items ?? { type: "null" }) };
     default:
-      if (node.$ref) return { kind: "ref", name: String(node.$ref).split("/").pop() ?? "" };
       return { kind: "primitive", name: "null" };
   }
 }
+function mergeAll(branches) {
+  const fields = {};
+  for (const branch of branches) {
+    const shape = jsonSchemaToShape(branch);
+    if (shape.kind === "object") Object.assign(fields, shape.fields);
+  }
+  return { kind: "object", fields };
+}
+function propertiesToFields(node) {
+  const required = node?.required ?? [];
+  const fields = {};
+  for (const [k, v] of Object.entries(node?.properties ?? {})) {
+    fields[k] = { type: jsonSchemaToShape(v), required: required.includes(k) };
+  }
+  return fields;
+}
+
+// src/adapters/jsonschema.ts
 var jsonSchemaAdapter = {
   name: "jsonschema",
-  exists(shardDir, slice) {
-    return existsSync5(schemaPath(shardDir, slice));
+  locate(shardDir, slice, role) {
+    return role === "consumed" ? join6(shardDir, "surface", "consumed", `${slice}.schema.json`) : join6(shardDir, "surface", `${slice}.schema.json`);
   },
-  extract(shardDir, slice) {
-    const schema = JSON.parse(readFileSync5(schemaPath(shardDir, slice), "utf8"));
+  parse(raw, slice) {
+    const schema = JSON.parse(raw);
     const name = schema.title ?? slice;
-    return {
-      slice,
-      symbols: { [name]: { name, kind: "type", shape: toShape(schema) } }
+    return { slice, symbols: { [name]: { name, kind: "type", shape: jsonSchemaToShape(schema) } } };
+  }
+};
+
+// src/adapters/openapi.ts
+var import_yaml2 = __toESM(require_dist(), 1);
+import { existsSync as existsSync4 } from "node:fs";
+import { join as join7 } from "node:path";
+var METHODS = ["get", "put", "post", "delete", "patch", "head", "options", "trace"];
+function basePath(shardDir, role) {
+  return role === "consumed" ? join7(shardDir, "surface", "consumed") : join7(shardDir, "surface");
+}
+function operationName(op, method, path) {
+  return op.operationId ?? `${method.toUpperCase()} ${path}`;
+}
+function requestShape(op) {
+  const fields = {};
+  for (const p of op.parameters ?? []) {
+    if (!p?.name) continue;
+    fields[p.name] = { type: jsonSchemaToShape(p.schema ?? {}), required: p.required === true };
+  }
+  const body = op.requestBody;
+  if (body) {
+    const schema = firstContentSchema(body.content);
+    if (schema) {
+      fields.body = { type: jsonSchemaToShape(schema), required: body.required === true };
+    }
+  }
+  return { kind: "object", fields };
+}
+function firstContentSchema(content) {
+  if (!content || typeof content !== "object") return void 0;
+  const preferred = Object.keys(content).find((k) => k.includes("json")) ?? Object.keys(content)[0];
+  return preferred ? content[preferred]?.schema : void 0;
+}
+function responseShape(op) {
+  const responses = op.responses ?? {};
+  const successKey = Object.keys(responses).filter((k) => /^2\d\d$/.test(k)).sort()[0];
+  const chosen = successKey ? responses[successKey] : responses.default;
+  const schema = chosen ? firstContentSchema(chosen.content) : void 0;
+  return schema ? jsonSchemaToShape(schema) : { kind: "primitive", name: "null" };
+}
+var openApiAdapter = {
+  name: "openapi",
+  locate(shardDir, slice, role) {
+    const dir = basePath(shardDir, role);
+    const json = join7(dir, `${slice}.openapi.json`);
+    const yaml = join7(dir, `${slice}.openapi.yaml`);
+    if (!existsSync4(json) && existsSync4(yaml)) return yaml;
+    return json;
+  },
+  parse(raw, slice) {
+    const doc = (0, import_yaml2.parse)(raw) ?? {};
+    const symbols = {};
+    for (const [name, schema] of Object.entries(doc.components?.schemas ?? {})) {
+      symbols[name] = {
+        name,
+        kind: "type",
+        shape: schema?.properties || schema?.type === "object" ? { kind: "object", fields: propertiesToFields(schema) } : jsonSchemaToShape(schema)
+      };
+    }
+    for (const [path, item] of Object.entries(doc.paths ?? {})) {
+      if (!item || typeof item !== "object") continue;
+      for (const method of METHODS) {
+        const op = item[method];
+        if (!op) continue;
+        const name = operationName(op, method, path);
+        if (symbols[name]) {
+          throw new Error(
+            `operation "${name}" collides with an existing ${symbols[name].kind} symbol of the same name. Rename the operationId or the schema - a surface cannot hold two symbols under one name.`
+          );
+        }
+        symbols[name] = {
+          name,
+          kind: "endpoint",
+          shape: {
+            kind: "object",
+            fields: {
+              request: { type: requestShape(op), required: true },
+              response: { type: responseShape(op), required: true }
+            }
+          }
+        };
+      }
+    }
+    return { slice, symbols };
+  }
+};
+
+// src/adapters/protobuf.ts
+import { join as join8 } from "node:path";
+var SCALAR_TO_PRIMITIVE = {
+  double: "number",
+  float: "number",
+  int32: "number",
+  int64: "number",
+  uint32: "number",
+  uint64: "number",
+  sint32: "number",
+  sint64: "number",
+  fixed32: "number",
+  fixed64: "number",
+  sfixed32: "number",
+  sfixed64: "number",
+  bool: "boolean",
+  string: "string",
+  // `bytes` has no canonical primitive; string is the honest approximation of
+  // "an opaque scalar", and it stays stable across both sides of a diff.
+  bytes: "string"
+};
+function stripComments(src) {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === '"' || ch === "'") {
+      const quote = ch;
+      out += ch;
+      i++;
+      while (i < src.length) {
+        if (src[i] === "\\") {
+          out += src[i] + (src[i + 1] ?? "");
+          i += 2;
+          continue;
+        }
+        out += src[i];
+        if (src[i] === quote) {
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    if (ch === "/" && src[i + 1] === "/") {
+      while (i < src.length && src[i] !== "\n") i++;
+      out += " ";
+      continue;
+    }
+    if (ch === "/" && src[i + 1] === "*") {
+      i += 2;
+      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
+      i += 2;
+      out += " ";
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+function scalarShape(type) {
+  const primitive = SCALAR_TO_PRIMITIVE[type];
+  if (primitive) return { kind: "primitive", name: primitive };
+  return { kind: "ref", name: type.split(".").filter(Boolean).pop() ?? type };
+}
+function readBlock(src, from) {
+  const open = src.indexOf("{", from);
+  if (open === -1) return null;
+  let depth = 0;
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}") {
+      depth--;
+      if (depth === 0) return { body: src.slice(open + 1, i), end: i + 1 };
+    }
+  }
+  return null;
+}
+function withoutNestedBlocks(body) {
+  let out = "";
+  let depth = 0;
+  for (const ch of body) {
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) out += ";";
+    } else if (depth === 0) out += ch;
+  }
+  return out;
+}
+var FIELD_RE = /(?:^|;)\s*(repeated\s+|optional\s+)?([A-Za-z_][\w.]*)\s+([A-Za-z_]\w*)\s*=\s*\d+/g;
+var MAP_FIELD_RE = /(?:^|;)\s*map\s*<\s*([A-Za-z_][\w.]*)\s*,\s*([A-Za-z_][\w.]*)\s*>\s*([A-Za-z_]\w*)\s*=\s*\d+/g;
+function inlineOneofs(body) {
+  let out = body;
+  for (; ; ) {
+    const m = /\boneof\s+[A-Za-z_]\w*/.exec(out);
+    if (!m) return out;
+    const block = readBlock(out, m.index + m[0].length);
+    if (!block) return out;
+    out = `${out.slice(0, m.index)};${block.body};${out.slice(block.end)}`;
+  }
+}
+function messageFields(body) {
+  const flat = withoutNestedBlocks(inlineOneofs(body));
+  const fields = {};
+  for (const m of flat.matchAll(MAP_FIELD_RE)) {
+    const [, , valueType, name] = m;
+    fields[name] = { type: { kind: "array", items: scalarShape(valueType) }, required: false };
+  }
+  const withoutMaps = flat.replace(MAP_FIELD_RE, ";");
+  for (const m of withoutMaps.matchAll(FIELD_RE)) {
+    const [, modifier, type, name] = m;
+    if (type === "map" || fields[name]) continue;
+    const base = scalarShape(type);
+    fields[name] = {
+      type: modifier?.trim() === "repeated" ? { kind: "array", items: base } : base,
+      // proto3 has no required fields; every field is optional on the wire, and
+      // claiming otherwise would manufacture required-mismatch findings against
+      // any other adapter's view of the same contract slice.
+      required: false
     };
+  }
+  return fields;
+}
+function enumValues(body) {
+  const values = [];
+  for (const m of withoutNestedBlocks(body).matchAll(/(?:^|;)\s*([A-Za-z_]\w*)\s*=\s*-?\d+/g)) {
+    values.push(m[1]);
+  }
+  return values;
+}
+function collectBlocks(src, keyword) {
+  const out = [];
+  const re = new RegExp(`\\b${keyword}\\s+([A-Za-z_]\\w*)`, "g");
+  for (const m of src.matchAll(re)) {
+    const block = readBlock(src, m.index + m[0].length);
+    if (block) out.push({ name: m[1], body: block.body });
+  }
+  return out;
+}
+var protobufAdapter = {
+  name: "protobuf",
+  locate(shardDir, slice, role) {
+    return role === "consumed" ? join8(shardDir, "surface", "consumed", `${slice}.proto`) : join8(shardDir, "surface", `${slice}.proto`);
+  },
+  parse(raw, slice) {
+    const src = stripComments(raw);
+    const symbols = {};
+    for (const { name, body } of collectBlocks(src, "message")) {
+      symbols[name] = { name, kind: "type", shape: { kind: "object", fields: messageFields(body) } };
+    }
+    for (const { name, body } of collectBlocks(src, "enum")) {
+      symbols[name] = { name, kind: "type", shape: { kind: "enum", values: enumValues(body) } };
+    }
+    for (const { name: service, body } of collectBlocks(src, "service")) {
+      const rpcRe = /\brpc\s+([A-Za-z_]\w*)\s*\(\s*(stream\s+)?([A-Za-z_][\w.]*)\s*\)\s*returns\s*\(\s*(stream\s+)?([A-Za-z_][\w.]*)\s*\)/g;
+      for (const m of body.matchAll(rpcRe)) {
+        const [, rpc, reqStream, reqType, resStream, resType] = m;
+        const name = `${service}.${rpc}`;
+        const wrap = (t, streaming) => streaming ? { kind: "array", items: scalarShape(t) } : scalarShape(t);
+        symbols[name] = {
+          name,
+          kind: "endpoint",
+          shape: {
+            kind: "object",
+            fields: {
+              request: { type: wrap(reqType, Boolean(reqStream)), required: true },
+              response: { type: wrap(resType, Boolean(resStream)), required: true }
+            }
+          }
+        };
+      }
+    }
+    return { slice, symbols };
   }
 };
 
 // src/adapters/index.ts
 var REGISTRY = {
+  dts: dtsAdapter,
   identity: identityAdapter,
-  jsonschema: jsonSchemaAdapter
+  jsonschema: jsonSchemaAdapter,
+  openapi: openApiAdapter,
+  protobuf: protobufAdapter
 };
 function getAdapter(name) {
   const adapter = REGISTRY[name];
-  if (!adapter) throw new Error(`unknown adapter: ${name}`);
+  if (!adapter) {
+    throw new Error(`unknown adapter: ${name} (available: ${Object.keys(REGISTRY).sort().join(", ")})`);
+  }
   return adapter;
+}
+function surfaceExists(adapter, shardDir, slice, role) {
+  return existsSync5(adapter.locate(shardDir, slice, role));
+}
+function extractSurface(adapter, shardDir, slice, role) {
+  const source = adapter.locate(shardDir, slice, role);
+  const raw = readFileSync4(source, "utf8");
+  return validateSurface(adapter.parse(raw, slice, source), source, slice);
 }
 
 // src/surface/diff.ts
@@ -7630,15 +8256,28 @@ function lintConventions(surface, rules) {
 }
 
 // src/check/shardCheck.ts
+function readSurface(adapter, shardDir, slice, role, root, findings) {
+  try {
+    return extractSurface(adapter, shardDir, slice, role);
+  } catch (e) {
+    findings.push({
+      slice,
+      kind: "invalid-surface",
+      location: `${slice} (${role} surface at ${relative(root, adapter.locate(shardDir, slice, role))})`,
+      actual: String(e?.message ?? e)
+    });
+    return null;
+  }
+}
 function checkShard(root, shardName) {
   const manifest = loadManifest(root);
   const contract = loadContract(root);
   const entry = manifest.shards[shardName];
   if (!entry) throw new Error(`unknown shard: ${shardName}`);
-  const shardDir = join6(root, entry.dir);
+  const shardDir = join9(root, entry.dir);
   const findings = [];
-  const rulesPath = join6(root, "contract", "conventions.json");
-  const rules = existsSync6(rulesPath) ? JSON.parse(readFileSync6(rulesPath, "utf8")) : {};
+  const rulesPath = join9(root, "contract", "conventions.json");
+  const rules = existsSync6(rulesPath) ? JSON.parse(readFileSync5(rulesPath, "utf8")) : {};
   const adapter = getAdapter(entry.adapter);
   for (const slice of entry.provides) {
     const expected = contract.slices[slice];
@@ -7646,11 +8285,16 @@ function checkShard(root, shardName) {
       findings.push({ slice, kind: "missing-symbol", location: slice });
       continue;
     }
-    if (!adapter.exists(shardDir, slice)) {
-      findings.push({ slice, kind: "missing-symbol", location: `${slice} (no provided surface)` });
+    if (!surfaceExists(adapter, shardDir, slice, "provided")) {
+      findings.push({
+        slice,
+        kind: "missing-symbol",
+        location: `${slice} (no provided surface at ${relative(root, adapter.locate(shardDir, slice, "provided"))})`
+      });
       continue;
     }
-    const extracted = adapter.extract(shardDir, slice);
+    const extracted = readSurface(adapter, shardDir, slice, "provided", root, findings);
+    if (!extracted) continue;
     findings.push(...diffSurface(expected, extracted));
     findings.push(...lintConventions(extracted, rules));
   }
@@ -7660,12 +8304,16 @@ function checkShard(root, shardName) {
       findings.push({ slice, kind: "missing-symbol", location: slice });
       continue;
     }
-    const snapPath = join6(shardDir, "surface", "consumed", `${slice}.json`);
-    if (!existsSync6(snapPath)) {
-      findings.push({ slice, kind: "missing-symbol", location: `${slice} (no consumed snapshot)` });
+    if (!surfaceExists(adapter, shardDir, slice, "consumed")) {
+      findings.push({
+        slice,
+        kind: "missing-symbol",
+        location: `${slice} (no consumed snapshot at ${relative(root, adapter.locate(shardDir, slice, "consumed"))})`
+      });
       continue;
     }
-    const snapshot = JSON.parse(readFileSync6(snapPath, "utf8"));
+    const snapshot = readSurface(adapter, shardDir, slice, "consumed", root, findings);
+    if (!snapshot) continue;
     findings.push(...diffSurface(expected, snapshot));
   }
   const verifiedAgainst = readAck(shardDir) ?? manifest.contractVersion;
@@ -7694,14 +8342,14 @@ function status(root) {
 }
 
 // src/check/phaseCheck.ts
-var import_yaml2 = __toESM(require_dist(), 1);
-import { existsSync as existsSync7, readFileSync as readFileSync7 } from "node:fs";
-import { join as join7 } from "node:path";
+var import_yaml3 = __toESM(require_dist(), 1);
+import { existsSync as existsSync7, readFileSync as readFileSync6 } from "node:fs";
+import { join as join10 } from "node:path";
 import { execSync } from "node:child_process";
 function loadPhases(root) {
-  const path = join7(root, "contract", "phases.yaml");
+  const path = join10(root, "contract", "phases.yaml");
   if (!existsSync7(path)) return [];
-  return (0, import_yaml2.parse)(readFileSync7(path, "utf8")).phases ?? [];
+  return (0, import_yaml3.parse)(readFileSync6(path, "utf8")).phases ?? [];
 }
 function defaultRunner(cmd, cwd) {
   try {
@@ -7744,9 +8392,9 @@ function checkPhase(root, runAcceptance = defaultRunner) {
 }
 
 // src/isolation/sandbox.ts
-import { resolve as resolve2, relative, isAbsolute } from "node:path";
+import { resolve as resolve2, relative as relative2, isAbsolute } from "node:path";
 function isInside(dir, target) {
-  const rel = relative(resolve2(dir), resolve2(target));
+  const rel = relative2(resolve2(dir), resolve2(target));
   return rel === "" || !rel.startsWith("..") && !isAbsolute(rel);
 }
 function isReadAllowed(shardDir, contractDir, target) {
@@ -7758,16 +8406,153 @@ function isWriteAllowed(shardDir, contractDir, target) {
 
 // src/workspace/root.ts
 import { existsSync as existsSync8 } from "node:fs";
-import { dirname, join as join8, resolve as resolve3 } from "node:path";
+import { dirname, join as join11, resolve as resolve3 } from "node:path";
 function resolveRoot(cwd) {
   const loc = locateShard(cwd);
   if (loc) return loc.repoRoot;
   let dir = resolve3(cwd);
   for (; ; ) {
-    if (existsSync8(join8(dir, ".sharding", "manifest.yaml"))) return dir;
+    if (existsSync8(join11(dir, ".sharding", "manifest.yaml"))) return dir;
     const parent = dirname(dir);
     if (parent === dir) return resolve3(cwd);
     dir = parent;
+  }
+}
+
+// src/orchestrate/plan.ts
+function providersOf(manifest, participants) {
+  const map = /* @__PURE__ */ new Map();
+  for (const name of participants) {
+    for (const slice of manifest.shards[name].provides) {
+      map.set(slice, [...map.get(slice) ?? [], name]);
+    }
+  }
+  return map;
+}
+function planPhase(root) {
+  const manifest = loadManifest(root);
+  const phase = loadPhases(root).find((p) => p.id === manifest.currentPhase);
+  if (!phase) throw new Error(`no phase spec for ${manifest.currentPhase}`);
+  for (const name of phase.shards) {
+    if (!manifest.shards[name]) {
+      throw new Error(`phase ${phase.id} names shard "${name}", which is not in the manifest`);
+    }
+  }
+  const participants = new Set(phase.shards);
+  const providers = providersOf(manifest, participants);
+  const unprovided = [];
+  const deps = /* @__PURE__ */ new Map();
+  for (const name of participants) {
+    const set = /* @__PURE__ */ new Set();
+    for (const slice of manifest.shards[name].consumes) {
+      const provs = providers.get(slice);
+      if (!provs) {
+        unprovided.push({ shard: name, slice });
+        continue;
+      }
+      for (const p of provs) if (p !== name) set.add(p);
+    }
+    deps.set(name, set);
+  }
+  const waves = [];
+  const placed = /* @__PURE__ */ new Set();
+  let remaining = [...participants];
+  while (remaining.length > 0) {
+    const ready = remaining.filter((name) => [...deps.get(name)].every((d) => placed.has(d)));
+    if (ready.length === 0) break;
+    waves.push({ index: waves.length, shards: [...ready].sort() });
+    for (const name of ready) placed.add(name);
+    remaining = remaining.filter((name) => !placed.has(name));
+  }
+  const stuck = new Set(remaining);
+  const onCycle = (name) => {
+    const seen = /* @__PURE__ */ new Set();
+    const reaches = (from) => {
+      for (const dep of deps.get(from) ?? []) {
+        if (!stuck.has(dep)) continue;
+        if (dep === name) return true;
+        if (!seen.has(dep)) {
+          seen.add(dep);
+          if (reaches(dep)) return true;
+        }
+      }
+      return false;
+    };
+    return reaches(name);
+  };
+  const cyclic = remaining.filter(onCycle).sort();
+  const blocked = remaining.filter((n) => !cyclic.includes(n)).sort();
+  if (remaining.length > 0) waves.push({ index: waves.length, shards: [...remaining].sort() });
+  return { phase: phase.id, contractVersion: phase.contractVersion, waves, cyclic, blocked, unprovided };
+}
+
+// src/orchestrate/run.ts
+import { spawn } from "node:child_process";
+import { join as join12 } from "node:path";
+function commandDispatcher(command) {
+  return ({ shardDir }) => new Promise((resolve4) => {
+    const child = spawn(command, { cwd: shardDir, shell: true, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    child.stdout.on("data", (d) => output += d);
+    child.stderr.on("data", (d) => output += d);
+    child.on("error", (e) => resolve4({ exitCode: null, output: output + String(e.message) }));
+    child.on("close", (exitCode) => resolve4({ exitCode, output }));
+  });
+}
+async function orchestrate(root, options = {}) {
+  const plan = planPhase(root);
+  const manifest = loadManifest(root);
+  const runs = [];
+  if (options.dispatch) {
+    for (const wave of plan.waves) {
+      const results = await Promise.all(
+        wave.shards.map(async (shard) => {
+          const shardDir = join12(root, manifest.shards[shard].dir);
+          try {
+            const { exitCode, output } = await options.dispatch({ shard, shardDir, root });
+            return {
+              shard,
+              wave: wave.index,
+              dispatched: exitCode === 0,
+              exitCode,
+              output,
+              // Read the verdict from disk regardless of how the session
+              // exited. A failed session may still have left the shard clean,
+              // and a successful one may have left it drifted.
+              check: safeCheck(root, shard)
+            };
+          } catch (e) {
+            return {
+              shard,
+              wave: wave.index,
+              dispatched: false,
+              exitCode: null,
+              output: "",
+              check: safeCheck(root, shard),
+              error: String(e?.message ?? e)
+            };
+          }
+        })
+      );
+      runs.push(...results);
+    }
+  }
+  let gate = null;
+  let gateError;
+  if (!options.skipGate) {
+    try {
+      gate = checkPhase(root);
+    } catch (e) {
+      gateError = String(e?.message ?? e);
+    }
+  }
+  return { plan, runs, gate, gateError, passed: gate ? gate.passed : false };
+}
+function safeCheck(root, shard) {
+  try {
+    return checkShard(root, shard);
+  } catch {
+    return null;
   }
 }
 
@@ -7775,8 +8560,18 @@ function resolveRoot(cwd) {
 function flags(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i].startsWith("--")) {
-      out[argv[i].slice(2)] = argv[i + 1];
+    const arg = argv[i];
+    if (!arg.startsWith("--")) continue;
+    const eq = arg.indexOf("=");
+    if (eq !== -1) {
+      out[arg.slice(2, eq)] = arg.slice(eq + 1);
+      continue;
+    }
+    const next = argv[i + 1];
+    if (next === void 0 || next.startsWith("--")) {
+      out[arg.slice(2)] = "true";
+    } else {
+      out[arg.slice(2)] = next;
       i++;
     }
   }
@@ -7837,15 +8632,32 @@ function run(argv, cwd) {
       const entry = manifest.shards[shard];
       return { code: 0, stdout: j({ role: "shard", shard, consumes: entry.consumes }) };
     }
+    case "plan": {
+      const plan = planPhase(root);
+      return { code: 0, stdout: j(plan) };
+    }
     default:
       return { code: 2, stdout: j({ error: `unknown command: ${cmd}` }) };
   }
 }
+async function runAsync(argv, cwd) {
+  const [cmd, ...rest] = argv;
+  if (cmd !== "orchestrate") return run(argv, cwd);
+  const j = (v) => JSON.stringify(v, null, 2);
+  const root = resolveRoot(cwd);
+  const f = flags(rest);
+  const result = await orchestrate(root, {
+    dispatch: f["session-cmd"] ? commandDispatcher(f["session-cmd"]) : void 0,
+    skipGate: "skip-gate" in f
+  });
+  return { code: result.passed ? 0 : 1, stdout: j(result) };
+}
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const { code, stdout } = run(process.argv.slice(2), process.cwd());
+  const { code, stdout } = await runAsync(process.argv.slice(2), process.cwd());
   process.stdout.write(stdout + "\n");
   process.exit(code);
 }
 export {
-  run
+  run,
+  runAsync
 };

@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { StructuralSurface } from "../surface/types";
+import { validateSurface } from "../surface/validate";
 
 export interface Contract {
   version: string;
@@ -12,17 +13,14 @@ function loadDir(dir: string, into: Record<string, StructuralSurface>): void {
   for (const file of readdirSync(dir)) {
     if (!file.endsWith(".json")) continue;
     const path = join(dir, file);
-    const surface = JSON.parse(readFileSync(path, "utf8")) as StructuralSurface;
-    // A contract slice file must be a canonical structural surface:
-    // { slice: string, symbols: { ... } }. Without this guard a malformed
-    // file (e.g. a free-form interface shape) silently keys the slice map at
-    // `undefined`, and every shard then reports a spurious missing-symbol.
-    if (typeof surface.slice !== "string" || surface.slice.length === 0) {
-      throw new Error(`contract file ${path} is missing a string "slice" field (expected canonical { slice, symbols } surface)`);
-    }
-    if (typeof surface.symbols !== "object" || surface.symbols === null) {
-      throw new Error(`contract slice "${surface.slice}" (${path}) is missing a "symbols" object`);
-    }
+    // A contract slice file must be a canonical structural surface. The same
+    // validator runs over adapter output, so the contract and the surfaces it
+    // is diffed against are held to one definition of the IR rather than two
+    // drifting approximations of it.
+    //
+    // Note the contract side passes no expected slice: unlike a shard surface,
+    // which is read as a named slice, a contract file declares its own.
+    const surface = validateSurface(JSON.parse(readFileSync(path, "utf8")), path);
     if (into[surface.slice]) {
       throw new Error(`contract slice "${surface.slice}" is declared twice (duplicate in ${path})`);
     }

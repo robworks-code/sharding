@@ -35,7 +35,8 @@ describe("loadContract", () => {
       join(root, "contract", "schemas", "bad.json"),
       JSON.stringify({ interface: "events", provides: {} }),
     );
-    expect(() => loadContract(root)).toThrow(/missing a string "slice" field/);
+    // The error must name the offending file - the reader is hand-writing JSON.
+    expect(() => loadContract(root)).toThrow(/bad\.json: slice is missing or not a non-empty string/);
   });
 
   it("rejects a slice file that lacks a symbols object", () => {
@@ -43,7 +44,7 @@ describe("loadContract", () => {
       join(root, "contract", "schemas", "nosym.json"),
       JSON.stringify({ slice: "Widget" }),
     );
-    expect(() => loadContract(root)).toThrow(/missing a "symbols" object/);
+    expect(() => loadContract(root)).toThrow(/nosym\.json: symbols is missing or not an object/);
   });
 
   it("rejects a duplicate slice declaration", () => {

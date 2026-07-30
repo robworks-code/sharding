@@ -24,6 +24,8 @@ export interface StructuralSurface {
 }
 
 export type FindingKind =
+  /** The surface file exists but could not be read as a canonical surface. */
+  | "invalid-surface"
   | "missing-symbol"
   | "unexpected-symbol"
   | "kind-mismatch"
