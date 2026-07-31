@@ -12,6 +12,7 @@ import {
   buildShardPrompt,
   claudeSessionArgs,
   claudeSessionDispatcher,
+  sessionEnforcement,
   type ShardSessionOptions,
 } from "./orchestrate/session";
 import { join } from "node:path";
@@ -31,7 +32,13 @@ const PERMISSION_MODES = ["acceptEdits", "auto", "bypassPermissions", "manual", 
 function sessionOptions(
   f: Record<string, string>,
 ): { options: ShardSessionOptions } | { error: string } {
-  for (const key of ["session-bin", "session-model", "session-permission-mode", "session-task"]) {
+  for (const key of [
+    "session-bin",
+    "session-model",
+    "session-permission-mode",
+    "session-task",
+    "session-plugin-dir",
+  ]) {
     if (f[key] === "true") return { error: `--${key} needs a value` };
   }
   const mode = f["session-permission-mode"];
@@ -44,6 +51,8 @@ function sessionOptions(
       model: f["session-model"],
       permissionMode: mode,
       task: f["session-task"],
+      pluginRoot: f["session-plugin-dir"],
+      allowUnenforced: "allow-unenforced" in f,
     },
   };
 }
@@ -177,10 +186,16 @@ export function run(argv: string[], cwd: string): { code: number; stdout: string
       const parsed = sessionOptions(f);
       if ("error" in parsed) return { code: 2, stdout: j({ error: parsed.error }) };
       const options = parsed.options;
+      const enforcement = sessionEnforcement(options);
       return {
         code: 0,
         stdout: j({
           bin: options.bin ?? "claude",
+          // The argv alone does not tell a reviewer whether these sessions are
+          // sandboxed, and that is the part worth approving. Reported first
+          // among the facts about the run rather than left to be inferred from
+          // whether `--plugin-dir` happens to appear in `args`.
+          enforcement,
           // The prompt is fed on stdin, not argv, so it is reported separately
           // rather than being buried at the end of `args`. Showing it as an
           // argument would misrepresent the invocation being approved.
@@ -189,7 +204,11 @@ export function run(argv: string[], cwd: string): { code: number; stdout: string
           sessions: shards.map((shard) => ({
             shard,
             cwd: join(root, manifest.shards[shard].dir),
-            prompt: buildShardPrompt(root, shard, { manifest, task: options.task }),
+            prompt: buildShardPrompt(root, shard, {
+              manifest,
+              task: options.task,
+              enforced: enforcement.enforced,
+            }),
           })),
         }),
       };
@@ -234,8 +253,26 @@ export async function runAsync(argv: string[], cwd: string): Promise<{ code: num
   if ("error" in parsed) return { code: 2, stdout: j({ error: parsed.error }) };
 
   let dispatch;
-  if (preset) dispatch = claudeSessionDispatcher(parsed.options);
-  else if (f["session-cmd"]) dispatch = commandDispatcher(f["session-cmd"]);
+  if (preset) {
+    // Refuse rather than warn. The preset hands every session a permission mode
+    // that can write, and the only thing keeping it inside its own shard is a
+    // hook that may not be loaded; dispatching anyway would spawn N writers
+    // across the workspace with the boundary reduced to a sentence in a prompt.
+    // A warning printed alongside a run that already happened is not a choice.
+    // `--session-cmd` is not gated: that command is the user's own, and the
+    // engine is not the one granting it anything.
+    const enforcement = sessionEnforcement(parsed.options);
+    if (!enforcement.enforced && !parsed.options.allowUnenforced) {
+      return {
+        code: 2,
+        stdout: j({
+          error: `refusing to dispatch unenforced: ${enforcement.reason}`,
+          hint: "pass --session-plugin-dir <path to this plugin> to load the sandbox, or --allow-unenforced to accept that shard sessions can write outside their own directory",
+        }),
+      };
+    }
+    dispatch = claudeSessionDispatcher(parsed.options);
+  } else if (f["session-cmd"]) dispatch = commandDispatcher(f["session-cmd"]);
 
   const result = await orchestrate(root, {
     dispatch,

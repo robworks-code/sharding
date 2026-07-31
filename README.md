@@ -99,7 +99,7 @@ Three mechanisms enforce the boundaries:
 - `hooks/`, `commands/`, `skills/`, `.claude-plugin/` - the Claude Code plugin surface (SessionStart / PreToolUse / Stop hooks, the `/shard-*` commands, and the sharding skill)
 - `examples/demo/` - a two-shard demo (`orders` provides an Order API; `gateway` consumes it) whose end-to-end test drives the real engine
 - `examples/multistack/` - a five-shard demo with one shard per adapter, proving a single contract gates a workspace whose shards each speak their own format
-- `tests/` - the test suite (214 tests across 27 files)
+- `tests/` - the test suite (224 tests across 27 files)
 - `docs/design.md` - the design spec: premise, scope decisions, and the mechanism in full
 - `docs/surface-format.md` - the canonical `{slice, symbols}` surface format, the finding kinds, and how each adapter reads a shard's surface
 
@@ -156,6 +156,7 @@ Dispatching is opt-in because spawning sessions is the one irreversible thing he
 
 - `--print`, so each session terminates instead of waiting for a human.
 - `--add-dir <root>/contract`, because a shard session starts in `shards/<name>/` and the contract it is measured against is outside that directory. The contract directory alone is granted, never the workspace root, so sibling shards stay out of reach.
+- `--plugin-dir <this plugin>`, which loads the `PreToolUse` hook that actually confines the session.
 - A prompt generated from the shard's own `SHARD.md`, its manifest entry, the frozen `contract/VERSION`, and the surface paths its adapter actually reads - so a `dts` shard is told about `.d.ts` files and a `protobuf` shard about `.proto` files.
 
 The prompt is delivered on **stdin**, not as a trailing argument. That is a correctness requirement, not a preference: `--add-dir` is variadic, so a prompt passed as a positional gets read as a second directory and the session exits with `Input must be provided either through stdin or as a prompt argument` - every session in the wave, instantly. On stdin the prompt is data that no argument parser and no shell can reinterpret.
@@ -169,9 +170,18 @@ npm run cli -- orchestrate --session-preset claude \
   --session-permission-mode bypassPermissions
 ```
 
-Run `session-preview` first: it spawns nothing and prints the invocation verbatim - the shared `args`, `promptDelivery: "stdin"`, and each shard's `prompt` - which is what you approve before anything irreversible happens.
+Run `session-preview` first: it spawns nothing and prints the invocation verbatim - `enforcement`, the shared `args`, `promptDelivery: "stdin"`, and each shard's `prompt` - which is what you approve before anything irreversible happens.
 
-The default permission mode is `acceptEdits`, since a shard session's whole job is editing its own directory. `bypassPermissions` is what makes a run genuinely unattended, and it is opt-in on purpose. Neither mode is what isolates the shard - that comes from the working directory plus the plugin's `PreToolUse` hook, which denies reads of sibling shards and writes to the contract regardless of permission mode.
+The default permission mode is `acceptEdits`, since a shard session's whole job is editing its own directory. `bypassPermissions` is what makes a run genuinely unattended, and it is opt-in on purpose. Neither mode is what isolates the shard - that comes from the working directory plus the `PreToolUse` hook, which denies reads of sibling shards and writes to the contract regardless of permission mode.
+
+Because that hook is the isolation, the preset carries it rather than assuming it. `--plugin-dir` loads this plugin into each session, so the sandbox holds even when the engine is run standalone and the plugin is not installed. If the plugin directory cannot be located, `orchestrate` refuses to dispatch instead of spawning writable sessions with nothing enforcing their boundary:
+
+```bash
+npm run cli -- orchestrate --session-preset claude --session-plugin-dir /path/to/sharding
+npm run cli -- orchestrate --session-preset claude --allow-unenforced   # no sandbox; understand this first
+```
+
+`--allow-unenforced` means any shard session can write any other shard and the frozen contract. The preview reports `enforcement` either way, so an unenforced run is visible before it starts rather than inferred from a missing flag.
 
 Every command finds the workspace from the working directory, so they run from the
 conductor root, from inside a shard, or from any directory under either. `check` with

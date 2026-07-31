@@ -8585,7 +8585,36 @@ function safeCheck(root, shard) {
 
 // src/orchestrate/session.ts
 import { existsSync as existsSync9, readFileSync as readFileSync7 } from "node:fs";
-import { join as join13, relative as relative3 } from "node:path";
+import { dirname as dirname2, join as join13, relative as relative3 } from "node:path";
+import { fileURLToPath } from "node:url";
+function resolvePluginRoot(from) {
+  let dir = from ?? dirname2(fileURLToPath(import.meta.url));
+  while (true) {
+    if (existsSync9(join13(dir, ".claude-plugin", "plugin.json")) && existsSync9(join13(dir, "hooks", "hooks.json"))) {
+      return dir;
+    }
+    const parent = dirname2(dir);
+    if (parent === dir) return void 0;
+    dir = parent;
+  }
+}
+function sessionEnforcement(options = {}) {
+  const override = options.pluginRoot;
+  if (override !== void 0) {
+    return existsSync9(join13(override, ".claude-plugin", "plugin.json")) && existsSync9(join13(override, "hooks", "hooks.json")) ? { enforced: true, pluginRoot: override } : {
+      enforced: false,
+      reason: `${override} is not a plugin directory (no .claude-plugin/plugin.json and hooks/hooks.json inside it)`
+    };
+  }
+  const pluginRoot = resolvePluginRoot();
+  if (!pluginRoot) {
+    return {
+      enforced: false,
+      reason: "could not locate this plugin's directory (expected a .claude-plugin/plugin.json and hooks/hooks.json above the running engine), so the PreToolUse hook that confines a shard session cannot be loaded"
+    };
+  }
+  return { enforced: true, pluginRoot };
+}
 function surfacePathFor(adapterName, shardDir, slice, role) {
   try {
     return relative3(shardDir, getAdapter(adapterName).locate(shardDir, slice, role));
@@ -8623,12 +8652,13 @@ function buildShardPrompt(root, shard, options = {}) {
     "---",
     "",
     "Working rules:",
-    // Deliberately stated as a rule the session must keep, not as a mechanism
-    // it can rely on. The PreToolUse hook only exists when the sharding plugin
-    // is installed for whoever spawned this session, and the engine is
-    // documented as usable without the plugin - so promising enforcement would
-    // be false exactly where it matters most.
-    "- Work only inside this directory. Do not read or write any sibling shard, and do not write the contract. Where the sharding plugin is installed a PreToolUse hook denies these outright; treat the rule as binding either way.",
+    // Stated as a rule the session must keep either way, but the sentence about
+    // enforcement has to match the run it is describing. Claiming a hook will
+    // deny the call is false when none is loaded, and that is exactly the case
+    // where the session most needs to treat the boundary as its own
+    // responsibility. `--allow-unenforced` is what makes the second form
+    // reachable at all.
+    options.enforced === false ? "- Work only inside this directory. Do not read or write any sibling shard, and do not write the contract. NOTHING IS ENFORCING THIS RUN: no sandbox hook is loaded, so the boundary holds only because you keep it." : "- Work only inside this directory. Do not read or write any sibling shard, and do not write the contract. A PreToolUse hook denies these outright; treat the rule as binding regardless.",
     "- Your DECLARED surface is what the gate measures. Implementation with no matching surface file reads as drift, and so does a surface file with nothing behind it.",
     "- Check yourself at any point with the `/sharding:shard-check` command.",
     "- Your exit code is not the verdict. The conductor re-reads your surface from disk after you stop, so finishing early with a drifted surface fails the phase just the same.",
@@ -8637,7 +8667,13 @@ function buildShardPrompt(root, shard, options = {}) {
   ].join("\n");
 }
 function claudeSessionArgs(root, options = {}) {
+  const enforcement = sessionEnforcement(options);
   const args = [
+    // Load this plugin for the session so the sandbox travels with the
+    // dispatch. `--plugin-dir` takes a single `<path>` (it is repeatable via
+    // more flags, not variadic), so unlike `--add-dir` it cannot swallow what
+    // follows it.
+    ...enforcement.pluginRoot ? ["--plugin-dir", enforcement.pluginRoot] : [],
     // The contract lives above the session's cwd, so it has to be granted
     // explicitly. Granting the contract directory alone, rather than the
     // workspace root, is what keeps sibling shards out of reach.
@@ -8662,11 +8698,13 @@ function claudeSessionArgs(root, options = {}) {
 }
 function claudeSessionDispatcher(options = {}) {
   const manifests = /* @__PURE__ */ new Map();
+  const enforcement = sessionEnforcement(options);
   return async (ctx) => {
     if (!manifests.has(ctx.root)) manifests.set(ctx.root, loadManifest(ctx.root));
     const prompt = buildShardPrompt(ctx.root, ctx.shard, {
       manifest: manifests.get(ctx.root),
-      task: options.task
+      task: options.task,
+      enforced: enforcement.enforced
     });
     return spawnDispatcher(
       options.bin ?? "claude",
@@ -8681,7 +8719,13 @@ function claudeSessionDispatcher(options = {}) {
 import { join as join14 } from "node:path";
 var PERMISSION_MODES = ["acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"];
 function sessionOptions(f) {
-  for (const key of ["session-bin", "session-model", "session-permission-mode", "session-task"]) {
+  for (const key of [
+    "session-bin",
+    "session-model",
+    "session-permission-mode",
+    "session-task",
+    "session-plugin-dir"
+  ]) {
     if (f[key] === "true") return { error: `--${key} needs a value` };
   }
   const mode = f["session-permission-mode"];
@@ -8693,7 +8737,9 @@ function sessionOptions(f) {
       bin: f["session-bin"],
       model: f["session-model"],
       permissionMode: mode,
-      task: f["session-task"]
+      task: f["session-task"],
+      pluginRoot: f["session-plugin-dir"],
+      allowUnenforced: "allow-unenforced" in f
     }
   };
 }
@@ -8793,10 +8839,16 @@ function run(argv, cwd) {
       const parsed = sessionOptions(f);
       if ("error" in parsed) return { code: 2, stdout: j({ error: parsed.error }) };
       const options = parsed.options;
+      const enforcement = sessionEnforcement(options);
       return {
         code: 0,
         stdout: j({
           bin: options.bin ?? "claude",
+          // The argv alone does not tell a reviewer whether these sessions are
+          // sandboxed, and that is the part worth approving. Reported first
+          // among the facts about the run rather than left to be inferred from
+          // whether `--plugin-dir` happens to appear in `args`.
+          enforcement,
           // The prompt is fed on stdin, not argv, so it is reported separately
           // rather than being buried at the end of `args`. Showing it as an
           // argument would misrepresent the invocation being approved.
@@ -8805,7 +8857,11 @@ function run(argv, cwd) {
           sessions: shards.map((shard) => ({
             shard,
             cwd: join14(root, manifest.shards[shard].dir),
-            prompt: buildShardPrompt(root, shard, { manifest, task: options.task })
+            prompt: buildShardPrompt(root, shard, {
+              manifest,
+              task: options.task,
+              enforced: enforcement.enforced
+            })
           }))
         })
       };
@@ -8833,8 +8889,19 @@ async function runAsync(argv, cwd) {
   const parsed = sessionOptions(f);
   if ("error" in parsed) return { code: 2, stdout: j({ error: parsed.error }) };
   let dispatch;
-  if (preset) dispatch = claudeSessionDispatcher(parsed.options);
-  else if (f["session-cmd"]) dispatch = commandDispatcher(f["session-cmd"]);
+  if (preset) {
+    const enforcement = sessionEnforcement(parsed.options);
+    if (!enforcement.enforced && !parsed.options.allowUnenforced) {
+      return {
+        code: 2,
+        stdout: j({
+          error: `refusing to dispatch unenforced: ${enforcement.reason}`,
+          hint: "pass --session-plugin-dir <path to this plugin> to load the sandbox, or --allow-unenforced to accept that shard sessions can write outside their own directory"
+        })
+      };
+    }
+    dispatch = claudeSessionDispatcher(parsed.options);
+  } else if (f["session-cmd"]) dispatch = commandDispatcher(f["session-cmd"]);
   const result = await orchestrate(root, {
     dispatch,
     skipGate: "skip-gate" in f,
