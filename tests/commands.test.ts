@@ -40,4 +40,15 @@ describe("plugin command surface", () => {
     // saying so invites the combination the CLI rejects.
     expect(orchestrate).toMatch(/alternatives/);
   });
+
+  it("tells the reader what enforces shard isolation, and what happens without it", () => {
+    // The engine refuses to dispatch unenforced, and `--allow-unenforced`
+    // waives that. A doc naming the escape hatch without its consequence is how
+    // a model ends up passing it to get past an error message.
+    const orchestrate = cmd("shard-orchestrate");
+    expect(orchestrate).toMatch(/--plugin-dir/);
+    expect(orchestrate).toMatch(/refuses to dispatch/i);
+    expect(orchestrate).toMatch(/--allow-unenforced/);
+    expect(orchestrate).toMatch(/Report `enforcement`/);
+  });
 });

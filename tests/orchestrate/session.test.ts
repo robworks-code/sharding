@@ -1,8 +1,14 @@
 import { afterAll, describe, it, expect } from "vitest";
-import { chmodSync, cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { buildShardPrompt, claudeSessionArgs, claudeSessionDispatcher } from "../../src/orchestrate/session";
+import {
+  buildShardPrompt,
+  claudeSessionArgs,
+  claudeSessionDispatcher,
+  resolvePluginRoot,
+  sessionEnforcement,
+} from "../../src/orchestrate/session";
 import { orchestrate } from "../../src/orchestrate/run";
 import { run, runAsync } from "../../src/cli";
 import { scaffoldGraph } from "./fixture";
@@ -77,8 +83,13 @@ process.stdin.on("end", () => {
   chmodSync(bin, 0o755);
   return {
     bin,
-    readCalls: () =>
-      readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)),
+    // "never invoked" is a real, assertable outcome - the refusal path must
+    // spawn nothing - and it leaves no log file behind. Reading that as an
+    // ENOENT would make the strongest assertion in the file impossible to write.
+    readCalls: (): Invocation[] =>
+      existsSync(log)
+        ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l))
+        : [],
     cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
 }
@@ -155,8 +166,55 @@ describe("buildShardPrompt", () => {
  * Flags the installed Claude Code CLI declares as variadic (`<x...>`). A
  * variadic flag keeps consuming tokens until the next `--flag`, so anything
  * that follows one and is not itself a flag gets eaten.
+ *
+ * Read off `claude --help`, not guessed. `--plugin-dir` and `--plugin-url` were
+ * listed here originally and are NOT variadic - they take a single `<path>` /
+ * `<url>` and are repeated by passing the flag again. A conservative-but-wrong
+ * entry is still a false statement about the binary, and this list is the thing
+ * the argv guards are checked against.
  */
-const VARIADIC = ["--add-dir", "--mcp-config", "--plugin-dir", "--plugin-url", "--file", "--betas"];
+const VARIADIC = ["--add-dir", "--mcp-config", "--file", "--betas"];
+
+/** A directory shaped like a plugin, for pinning enforcement in a test. */
+function fakePluginDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "plugin-"));
+  mkdirSync(join(dir, ".claude-plugin"), { recursive: true });
+  mkdirSync(join(dir, "hooks"), { recursive: true });
+  writeFileSync(join(dir, ".claude-plugin", "plugin.json"), JSON.stringify({ name: "fake" }));
+  writeFileSync(join(dir, "hooks", "hooks.json"), JSON.stringify({ hooks: {} }));
+  return dir;
+}
+
+describe("sessionEnforcement", () => {
+  it("reports the sandbox as live when the plugin directory resolves", () => {
+    expect(sessionEnforcement()).toEqual({ enforced: true, pluginRoot: resolvePluginRoot() });
+  });
+
+  it("honors an explicit plugin directory that carries the marker files", () => {
+    const dir = fakePluginDir();
+    try {
+      expect(sessionEnforcement({ pluginRoot: dir })).toEqual({ enforced: true, pluginRoot: dir });
+      expect(claudeSessionArgs("/ws", { pluginRoot: dir })).toContain(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a bad --session-plugin-dir as unenforced, with the path in the reason", () => {
+    const missing = join(tmpdir(), "definitely-not-a-plugin-dir");
+    const e = sessionEnforcement({ pluginRoot: missing });
+    expect(e.enforced).toBe(false);
+    expect(e.reason).toContain(missing);
+  });
+
+  it("does not let --allow-unenforced change what it reports", () => {
+    // The flag decides whether an unenforced run may PROCEED. If it also made
+    // this function answer `enforced: false`, passing it would have disabled a
+    // sandbox that was available - and then tripped the very refusal it exists
+    // to waive.
+    expect(sessionEnforcement({ allowUnenforced: true }).enforced).toBe(true);
+  });
+});
 
 describe("claudeSessionArgs", () => {
   it("runs headless and grants the contract directory", () => {
@@ -197,6 +255,29 @@ describe("claudeSessionArgs", () => {
         expect(after, `${flag} is not followed by another flag in ${JSON.stringify(args)}`).toBeGreaterThan(-1);
       }
     }
+  });
+
+  it("loads this plugin into the session, so the sandbox travels with the dispatch", () => {
+    // The whole of #32. A shard session runs with a permission mode that can
+    // write; what keeps it inside its own directory is the PreToolUse hook in
+    // hooks/logic.mjs, and that hook only runs if Claude Code loaded this
+    // plugin. Before this, the dispatch assumed the plugin happened to be
+    // installed - so the documented standalone configuration spawned N writers
+    // with no sandbox at all and only a sentence in the prompt for a boundary.
+    const args = claudeSessionArgs("/ws");
+    const i = args.indexOf("--plugin-dir");
+    expect(i, `no --plugin-dir in ${JSON.stringify(args)}`).toBeGreaterThan(-1);
+    expect(args[i + 1]).toBe(resolvePluginRoot());
+  });
+
+  it("points --plugin-dir at a directory that really carries the hooks", () => {
+    // Asserting the flag is present proves nothing if the path is wrong: Claude
+    // Code would load nothing and the run would be silently unenforced while
+    // looking enforced. Assert the two files the enforcement actually lives in.
+    const root = resolvePluginRoot();
+    expect(root).toBeDefined();
+    expect(readFileSync(join(root!, "hooks", "hooks.json"), "utf8")).toContain("PreToolUse");
+    expect(readFileSync(join(root!, "hooks", "hooks.json"), "utf8")).toContain("pre-tool-use.mjs");
   });
 
   it("grants the contract directory only, not the workspace root", () => {
@@ -426,6 +507,83 @@ describe("cli session wiring", () => {
       stub.cleanup();
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("refuses to dispatch the preset when no sandbox can be loaded", async () => {
+    // The refusal is the point of #32: a run that cannot enforce isolation must
+    // not happen by default, because the shards get write permission either way
+    // and only the hook decides whether that stays inside one directory.
+    const root = multistack();
+    const stub = argvRecorder();
+    try {
+      const { code, stdout } = await runAsync(
+        [
+          "orchestrate",
+          "--session-preset",
+          "claude",
+          "--session-bin",
+          stub.bin,
+          "--session-plugin-dir",
+          join(root, "not-a-plugin"),
+          "--skip-gate",
+        ],
+        root,
+      );
+      expect(code).toBe(2);
+      expect(JSON.parse(stdout).error).toMatch(/refusing to dispatch unenforced/);
+      // And it must refuse BEFORE spawning. A refusal reported after the fact
+      // would be a warning, not a choice.
+      expect(stub.readCalls()).toEqual([]);
+    } finally {
+      stub.cleanup();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("dispatches unenforced only when explicitly allowed, and says so in the prompt", async () => {
+    const root = multistack();
+    const stub = argvRecorder();
+    try {
+      const { stdout } = await runAsync(
+        [
+          "orchestrate",
+          "--session-preset",
+          "claude",
+          "--session-bin",
+          stub.bin,
+          "--session-plugin-dir",
+          join(root, "not-a-plugin"),
+          "--allow-unenforced",
+          "--skip-gate",
+        ],
+        root,
+      );
+      expect(JSON.parse(stdout).runs).toHaveLength(5);
+      const calls = stub.readCalls();
+      expect(calls).toHaveLength(5);
+      // No sandbox was loaded, so the prompt must not claim one denies anything.
+      expect(calls[0].argv).not.toContain("--plugin-dir");
+      expect(calls[0].stdin).toContain("NOTHING IS ENFORCING THIS RUN");
+      expect(calls[0].stdin).not.toContain("A PreToolUse hook denies these outright");
+    } finally {
+      stub.cleanup();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("previews the enforcement status, not just the argv", () => {
+    const { code, stdout } = run(["session-preview"], MULTISTACK);
+    expect(code).toBe(0);
+    const preview = JSON.parse(stdout);
+    expect(preview.enforcement).toEqual({ enforced: true, pluginRoot: resolvePluginRoot() });
+    expect(preview.args).toContain("--plugin-dir");
+    // The preview is what a user approves a dispatch from, so an unenforced run
+    // has to be visible there rather than inferred from a missing flag.
+    const unenforced = JSON.parse(
+      run(["session-preview", "--session-plugin-dir", join(tmpdir(), "nope")], MULTISTACK).stdout,
+    );
+    expect(unenforced.enforcement.enforced).toBe(false);
+    expect(unenforced.sessions[0].prompt).toContain("NOTHING IS ENFORCING THIS RUN");
   });
 
   it("dispatches nothing when neither --session-cmd nor --session-preset is given", async () => {

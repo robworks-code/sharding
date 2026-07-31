@@ -11,11 +11,15 @@ To dispatch, use one of:
 - `--session-preset claude` - drive a real headless Claude Code session per shard. This is the blessed form. The prompt is generated from each shard's `SHARD.md`, its manifest entry and its adapter's surface paths; the session runs with `--print` and is granted `--add-dir <root>/contract` so it can read the contract it is measured against. Tune it with `--session-task '<what this phase is for>'`, `--session-model`, and `--session-permission-mode` (default `acceptEdits`; `bypassPermissions` is the genuinely unattended setting and should be named explicitly to the user before you use it).
 - `--session-cmd '<command>'` - drive an arbitrary command instead. The two are alternatives; passing both is an error.
 
-Either way the process runs once per shard with its working directory set to `shards/<name>/`, which is what makes it a shard session - the sandbox is inherited from where the process starts, not re-implemented.
+Either way the process runs once per shard with its working directory set to `shards/<name>/`, which is what makes it a shard session.
+
+cwd decides where a session starts, but what keeps it there is this plugin's PreToolUse hook, so `--session-preset claude` passes `--plugin-dir` and hands each session the hooks that confine it. That means the sandbox does not depend on the plugin being installed wherever the engine is run from. If the plugin directory cannot be found, `orchestrate` **refuses to dispatch** rather than spawning writable sessions with nothing enforcing their boundary; `--session-plugin-dir <path>` points it at the plugin explicitly, and `--allow-unenforced` proceeds without a sandbox. Do not reach for `--allow-unenforced` on the user's behalf - it means any shard session can write any other shard and the frozen contract, so name that consequence and let them decide.
 
 **Before dispatching, run `node ${CLAUDE_PLUGIN_ROOT}/dist/cli.mjs session-preview` (optionally with a shard name) and show the user the exact `args` it prints.** It spawns nothing. This is the one irreversible thing the engine does, so the user approves the real invocation, not a description of it. Pass the same `--session-*` flags to the preview that you intend to pass to `orchestrate`, or you will be showing them something you are not about to run.
 
-The preview reports `args` once (they are the same for every shard), `promptDelivery: "stdin"`, and a per-shard `prompt`. The prompt is fed on stdin rather than as an argument, so do not describe it as part of the command line.
+The preview reports `enforcement`, `args` once (they are the same for every shard), `promptDelivery: "stdin"`, and a per-shard `prompt`. The prompt is fed on stdin rather than as an argument, so do not describe it as part of the command line.
+
+**Report `enforcement` when you show the preview.** If `enforced` is false, say plainly that these sessions will run with no sandbox and quote the `reason`; the argv alone will not tell the user that, because the difference is a flag that is absent.
 
 `--skip-gate` dispatches without closing the phase. `--halt-on-wave-failure` stops after any wave that left a shard unclean, which is worth suggesting when sessions are expensive - a consumer dispatched against a provider that just failed is building against a slice that is not there yet. It keys off `check.clean`, not exit codes, so a session that crashed having left its shard conforming does not stop the run.
 
