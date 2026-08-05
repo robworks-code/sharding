@@ -2,7 +2,7 @@
   "name": "sharding",
   "version": "0.0.8",
   "private": true,
-  "license": "BUSL-1.1",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "test": "vitest run",
